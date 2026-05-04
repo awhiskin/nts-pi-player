@@ -1,0 +1,108 @@
+:root {
+  color-scheme: dark;
+  --bg: #000;
+  --fg: #fff;
+  --dim: #888;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  overflow: hidden;
+}
+
+#stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  position: relative;
+  width: min(80vmin, 720px);
+  aspect-ratio: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: center;
+  padding: 2rem;
+  border: 1px solid #222;
+  background-color: #0a0a0a;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.85) 100%);
+  pointer-events: none;
+}
+
+.card[data-kind="back"],
+.card[data-kind="back-to-top"],
+.card[data-kind="loading"] {
+  background-image: none !important;
+  background-color: #050505;
+  border-style: dashed;
+  color: var(--dim);
+  justify-content: center;
+}
+
+.card[data-kind="back"]::before,
+.card[data-kind="back-to-top"]::before,
+.card[data-kind="loading"]::before {
+  display: none;
+}
+
+.card[data-kind="now-playing"] {
+  background-color: #111;
+  justify-content: center;
+}
+
+.card[data-kind="enter-deck"] {
+  justify-content: center;
+}
+
+.card-label {
+  position: relative;
+  font-size: clamp(2rem, 6vmin, 4rem);
+  font-weight: 300;
+  letter-spacing: 0.02em;
+  margin: 0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.card-sub {
+  position: relative;
+  margin-top: 0.75rem;
+  font-size: clamp(0.9rem, 2vmin, 1.2rem);
+  color: #ddd;
+  max-width: 90%;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+#hint {
+  position: absolute;
+  bottom: 1rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--dim);
+  letter-spacing: 0.05em;
+}
