@@ -283,6 +283,12 @@ function adjustVolume(delta) {
   updateNowPlayingMode();
 }
 
+function decodeEntities(encodedString) {
+  const textArea = document.createElement('textarea');
+  textArea.innerHTML = encodedString;
+  return textArea.value;
+}
+
 function updateNowPlayingMode() {
   const modeEl = screenEl.querySelector(
     '.page[data-page-id="now-playing"] .np-mode'
@@ -430,6 +436,7 @@ function ensureNowPlayingScaffold(pageEl) {
         <span class="np-status"></span>
       </div>
       <h1 class="np-show"></h1>
+      <div class="np-with" hidden></div>
       <div class="np-sub" hidden></div>
       <div class="np-progress" hidden>
         <div class="np-progress-bar"><div class="np-progress-fill"></div></div>
@@ -480,13 +487,25 @@ function renderNowPlayingPage(pageEl) {
   pageEl.querySelector(".eyebrow-spinner").hidden = !isLoading;
   eyebrow.hidden = !eyebrowStr;
 
-  // Title.
+  // Title — split on " w/ " so the "w/ Host Name" portion can render below
+  // the main title at a smaller, italic, dimmed weight.
   const show = pageEl.querySelector(".np-show");
-  const title =
-    np.state === "idle" ? "NOTHING PLAYING"
-      : np.state === "error" ? (np.error_message || "ERROR")
-      : (np.title || "LOADING…").toUpperCase();
-  if (show.textContent !== title) show.textContent = title;
+  const withEl = pageEl.querySelector(".np-with");
+  let mainTitle, withPart;
+  if (np.state === "idle") {
+    mainTitle = "NOTHING PLAYING";
+    withPart = "";
+  } else if (np.state === "error") {
+    mainTitle = (np.error_message || "ERROR").toUpperCase();
+    withPart = "";
+  } else {
+    const split = splitTitleOnWith(np.title || "Loading…");
+    mainTitle = decodeEntities(split.main.toUpperCase());
+    withPart = decodeEntities(split.with.toUpperCase());
+  }
+  if (show.textContent !== mainTitle) show.textContent = mainTitle;
+  withEl.hidden = !withPart;
+  if (withPart && withEl.textContent !== withPart) withEl.textContent = withPart;
 
   // Subtitle.
   const sub = pageEl.querySelector(".np-sub");
@@ -515,6 +534,16 @@ function renderNowPlayingPage(pageEl) {
 
   // Mode indicator (volume / scroll).
   updateNowPlayingMode();
+}
+
+// NTS show titles often look like "Soup To Nuts w/ John Gómez" — split off
+// the "w/ Host" tail so the main title can dominate and the host gets
+// rendered below in a smaller, italic, dimmed style.
+function splitTitleOnWith(raw) {
+  if (!raw) return { main: "", with: "" };
+  const m = raw.match(/^(.+?)\s+(w\/.*)$/i);
+  if (!m) return { main: raw, with: "" };
+  return { main: m[1].trim(), with: m[2].trim() };
 }
 
 function eyebrowText(np) {
@@ -589,9 +618,21 @@ function renderLivePage(pageEl, isActive) {
 
       if (card.subtitle) {
         const show = document.createElement("div");
-        show.className = "live-show";
-        show.textContent = card.subtitle.toUpperCase();
+        show.className = "np-show";
+
+        const showWith = document.createElement("div");
+        showWith.className = "np-with";
+
+        const split = splitTitleOnWith(decodeEntities(card.subtitle.toUpperCase()) || "Loading…");
+
+        let mainTitle = decodeEntities(split.main.toUpperCase());
+        let withPart = decodeEntities(split.with.toUpperCase());
+
+        show.textContent = mainTitle;
+        showWith.textContent = withPart;
+
         inner.appendChild(show);
+        inner.appendChild(showWith);
       }
 
       cardEl.appendChild(inner);

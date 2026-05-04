@@ -470,7 +470,7 @@ def _format_time_range(starts: str, ends: str) -> str:
         return ""
     s_local = s.astimezone()
     e_local = e.astimezone()
-    return f"{s_local.strftime('%H:%M')} – {e_local.strftime('%H:%M')}"
+    return f"{s_local.strftime('%H:%M')} → {e_local.strftime('%H:%M')}"
 
 
 def _format_live_subtitle(starts: str, ends: str, location: str = "") -> str:

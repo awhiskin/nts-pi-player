@@ -243,6 +243,21 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* "w/ Host" tail of NTS show titles, split off and rendered below the main
+   title at a smaller, italic, dimmed weight (matches the design reference). */
+.np-with {
+  font-family: var(--display);
+  font-weight: 700;
+  font-style: italic;
+  font-size: clamp(28px, 6vmin, 32px);
+  line-height: 0.9;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+  color: rgba(244, 241, 234, 0.5);
+  margin-top: 10px;
+  text-wrap: balance;
+}
+
 .np-sub {
   font-family: var(--display);
   font-weight: 600;
