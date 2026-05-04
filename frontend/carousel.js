@@ -2,148 +2,247 @@ const LONG_PRESS_MS = 500;
 const PAGE_PREFETCH_THRESHOLD = 5;
 const VOLUME_STEP = 5;
 
-const cardEl = document.getElementById("card");
+const TOP_PAGES = [
+  { id: "now-playing", kind: "now-playing", label: "NOW PLAYING" },
+  { id: "live",        kind: "live",        label: "LIVE",     deck: "live" },
+  { id: "mixtapes",    kind: "list",        label: "MIXTAPES", deck: "mixtapes" },
+  { id: "moods",       kind: "list",        label: "MOODS",    deck: "moods" },
+  { id: "genres",      kind: "list",        label: "GENRES",   deck: "genres" },
+];
+
+const DECK_LABELS = {
+  live: "LIVE",
+  mixtapes: "MIXTAPES",
+  moods: "MOODS",
+  genres: "GENRES",
+};
+
+const screenEl = document.getElementById("screen");
+const chromeLabelEl = document.getElementById("chrome-label");
+const chromeTimeEl = document.getElementById("chrome-time");
+
 const decks = {};
 const deckMeta = {};
-const stack = [{ deck: "root", cursor: 0, cursorPlaced: false }];
+const deckTitles = {}; // deck_id -> human label (for sub-decks like genre:ambient)
 
-let nowPlaying = { state: "idle", title: "", subtitle: "", artwork: null, volume: 60, paused: false };
-let nowPlayingMode = "volume"; // "volume" | "scroll" — only meaningful while on Now Playing
+const stack = [{
+  level: "top",
+  pageIndex: 0,
+  itemCursors: {}, // top-page id -> focused item index within that page's deck
+}];
 
+let nowPlaying = {
+  state: "idle",
+  title: "",
+  subtitle: "",
+  artwork: null,
+  elapsed: null,
+  duration: null,
+  volume: 60,
+  paused: false,
+};
+let nowPlayingMode = "volume"; // "volume" | "scroll"
+
+let topMode = false; // true if the current DOM is the top-level carousel
+
+// ── helpers ─────────────────────────────────────────────────────
 function currentEntry() {
   return stack[stack.length - 1];
 }
 
-function currentCards() {
-  return decks[currentEntry().deck];
+function visibleCards(deckId) {
+  const cards = decks[deckId];
+  if (!cards) return null;
+  return cards.filter((c) => c.kind !== "back" && c.kind !== "back-to-top");
 }
 
-function currentCard() {
-  const cards = currentCards();
-  return cards ? cards[currentEntry().cursor] : null;
+function deckLabel(deckId) {
+  if (DECK_LABELS[deckId]) return DECK_LABELS[deckId];
+  if (deckTitles[deckId]) return deckTitles[deckId].toUpperCase();
+  return deckId.toUpperCase();
 }
 
-function placeCursor(entry) {
-  if (entry.cursorPlaced) return;
-  const cards = decks[entry.deck];
-  if (!cards || !cards.length) return;
-  entry.cursor = cards[0]?.kind === "back" ? 1 : 0;
-  entry.cursorPlaced = true;
+function formatTimeOfDay(d) {
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
 }
 
-function render() {
+function formatElapsed(s) {
+  if (s == null) return "—";
+  const m = Math.floor(s / 60);
+  const r = Math.floor(s % 60);
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+// ── Cursor / encoder ────────────────────────────────────────────
+function moveCursor(direction) {
+  // direction: "next" or "prev"
   const entry = currentEntry();
-  placeCursor(entry);
-  const cards = decks[entry.deck];
-
-  if (!cards) {
-    cardEl.dataset.kind = "loading-deck";
-    delete cardEl.dataset.state;
-    cardEl.style.backgroundImage = "";
-    cardEl.innerHTML = '<h1 class="card-label">…</h1>';
-    return;
-  }
-
-  const card = cards[entry.cursor];
-  if (card.kind === "now-playing") {
-    renderNowPlaying();
-    return;
-  }
-  delete cardEl.dataset.state;
-  cardEl.dataset.kind = card.kind;
-  cardEl.style.backgroundImage = card.artwork ? `url("${card.artwork}")` : "";
-  cardEl.innerHTML = "";
-
-  const label = document.createElement("h1");
-  label.className = "card-label";
-  label.textContent = card.label;
-  cardEl.appendChild(label);
-
-  if (card.subtitle) {
-    const sub = document.createElement("div");
-    sub.className = "card-sub";
-    sub.textContent = card.subtitle;
-    cardEl.appendChild(sub);
-  }
-}
-
-function renderNowPlaying() {
-  const np = nowPlaying;
-  cardEl.dataset.kind = "now-playing";
-  cardEl.dataset.state = np.state;
-  cardEl.dataset.mode = nowPlayingMode;
-  cardEl.style.backgroundImage = np.artwork ? `url("${np.artwork}")` : "";
-  cardEl.innerHTML = "";
-
-  if (np.state === "loading") {
-    const spinner = document.createElement("div");
-    spinner.className = "spinner";
-    cardEl.appendChild(spinner);
-  }
-
-  const label = document.createElement("h1");
-  label.className = "card-label";
-  if (np.state === "idle") {
-    label.textContent = "Nothing playing";
-  } else if (np.state === "error") {
-    label.textContent = np.error_message || "Error";
+  if (entry.level === "top") {
+    moveTopCursor(direction);
   } else {
-    label.textContent = np.title || "Loading…";
+    moveDeckCursor(direction, entry);
   }
-  cardEl.appendChild(label);
-
-  if (np.state !== "idle" && np.state !== "error" && np.subtitle) {
-    const sub = document.createElement("div");
-    sub.className = "card-sub";
-    sub.textContent = np.subtitle;
-    cardEl.appendChild(sub);
-  }
-
-  if (np.state === "playing" && np.elapsed != null) {
-    const time = document.createElement("div");
-    time.className = "card-time";
-    time.textContent = formatTime(np.elapsed, np.duration);
-    cardEl.appendChild(time);
-  }
-
-  const mode = document.createElement("div");
-  mode.className = "card-mode";
-  if (nowPlayingMode === "volume") {
-    const vol = `vol ${np.volume ?? 60}`;
-    mode.textContent = np.paused ? `paused · ${vol}` : vol;
-  } else {
-    mode.textContent = "scroll mode — rotate to navigate";
-  }
-  cardEl.appendChild(mode);
 }
 
-function formatTime(elapsed, duration) {
-  const fmt = (s) => {
-    if (s == null) return "—";
-    const m = Math.floor(s / 60);
-    const r = Math.floor(s % 60);
-    return `${m}:${r.toString().padStart(2, "0")}`;
-  };
-  if (duration && duration > 0) return `${fmt(elapsed)} / ${fmt(duration)}`;
-  return fmt(elapsed);
-}
-
-function rotate(direction) {
-  const cards = currentCards();
-  if (!cards || !cards.length) return;
+function moveTopCursor(direction) {
   const entry = currentEntry();
-  const card = cards[entry.cursor];
+  const page = TOP_PAGES[entry.pageIndex];
+  const delta = direction === "next" ? 1 : -1;
 
-  if (card?.kind === "now-playing" && nowPlayingMode === "volume") {
-    adjustVolume(direction === "cw" ? VOLUME_STEP : -VOLUME_STEP);
+  // Now-playing: in volume mode, encoder = volume.
+  if (page.kind === "now-playing" && nowPlayingMode === "volume") {
+    adjustVolume(delta * VOLUME_STEP);
     return;
   }
 
-  const delta = direction === "cw" ? 1 : -1;
-  entry.cursor = Math.max(0, Math.min(cards.length - 1, entry.cursor + delta));
-  entry.cursorPlaced = true;
-  maybePrefetchPage(entry);
+  // For pages with internal items, try to move within first.
+  if (page.kind === "list" || page.kind === "live") {
+    const items = visibleCards(page.deck);
+    if (items && items.length) {
+      const cur = entry.itemCursors[page.id] ?? 0;
+      const next = cur + delta;
+      if (next >= 0 && next < items.length) {
+        entry.itemCursors[page.id] = next;
+        maybePrefetchTopPage(page);
+        renderTopActivePage();
+        return;
+      }
+    }
+  }
+
+  // Edge — bounce to next/prev top page.
+  const newPage = entry.pageIndex + delta;
+  if (newPage >= 0 && newPage < TOP_PAGES.length) {
+    entry.pageIndex = newPage;
+    updateTopTransform();
+    updateChrome();
+    // Refresh now-playing page bg etc.
+    renderTopActivePage();
+  }
+}
+
+function moveDeckCursor(direction, entry) {
+  const cards = visibleCards(entry.deck);
+  if (!cards || !cards.length) return;
+  const delta = direction === "next" ? 1 : -1;
+  const next = Math.max(0, Math.min(cards.length - 1, entry.cursor + delta));
+  if (next === entry.cursor) return;
+  entry.cursor = next;
+  maybePrefetchDeck(entry);
+  updateDeckPageFocus();
+}
+
+// ── Click / long-press ─────────────────────────────────────────
+function click() {
+  const entry = currentEntry();
+  if (entry.level === "top") {
+    clickTop();
+  } else {
+    clickDeck(entry);
+  }
+}
+
+function clickTop() {
+  const entry = currentEntry();
+  const page = TOP_PAGES[entry.pageIndex];
+
+  if (page.kind === "now-playing") {
+    if (nowPlayingMode === "volume") {
+      if (nowPlaying.state === "playing") {
+        send({ type: nowPlaying.paused ? "resume" : "pause" });
+      }
+    } else if (nowPlaying.state !== "idle") {
+      send({ type: "stop" });
+    }
+    return;
+  }
+
+  const items = visibleCards(page.deck);
+  if (!items || !items.length) return;
+  const cur = entry.itemCursors[page.id] ?? 0;
+  triggerCard(items[cur]);
+}
+
+function clickDeck(entry) {
+  const cards = visibleCards(entry.deck);
+  if (!cards || !cards.length) return;
+  triggerCard(cards[entry.cursor]);
+}
+
+function triggerCard(card) {
+  if (!card) return;
+  if (card.kind === "enter-deck") {
+    enterDeck(card.deck, card.label);
+  } else if (card.kind === "play") {
+    send({ type: "play", card_id: card.id });
+    goToTopLevel();
+  }
+  // unplayable: no-op
+}
+
+function longPress() {
+  const entry = currentEntry();
+  if (entry.level === "top") {
+    const page = TOP_PAGES[entry.pageIndex];
+    if (page.kind === "now-playing") {
+      nowPlayingMode = nowPlayingMode === "volume" ? "scroll" : "volume";
+      renderTopActivePage();
+      return;
+    }
+    // On any other top-level page: jump to Now Playing and reset cursors.
+    entry.pageIndex = 0;
+    resetTopCursors(0);
+    updateTopTransform();
+    updateChrome();
+    refreshAllTopPages();
+    return;
+  }
+  // Drilled in: pop to parent. Preserve cursors so the user can quickly
+  // back out of an accidental drill-in and resume where they were.
+  stack.pop();
   render();
+}
+
+function enterDeck(deckId, label) {
+  if (label) deckTitles[deckId] = label;
+  stack.push({ level: "deck", deck: deckId, cursor: 0 });
+  if (!decks[deckId]) {
+    send({ type: "request_deck", deck_id: deckId, offset: 0 });
+  }
+  render();
+}
+
+function goToTopLevel() {
+  stack.length = 1;
+  stack[0].pageIndex = 0;
+  nowPlayingMode = "volume";
+  resetTopCursors(0);
+  render();
+}
+
+// Cursor reset rule: pages "ahead" of the focused page snap to first item;
+// pages "behind" snap to last item, so the next bounce in either direction
+// lands at the boundary of the neighbouring page rather than mid-list.
+function resetTopCursors(focusedPageIndex) {
+  for (let i = 0; i < TOP_PAGES.length; i++) {
+    const page = TOP_PAGES[i];
+    if (!page.deck) continue; // Now Playing has no items
+    const items = visibleCards(page.deck);
+    const lastIdx = items && items.length ? items.length - 1 : 0;
+    stack[0].itemCursors[page.id] = i < focusedPageIndex ? lastIdx : 0;
+  }
+}
+
+// Refresh focus highlight on all top pages, including off-screen ones, so a
+// reset is reflected before the user slides into a page (no stale highlight).
+function refreshAllTopPages() {
+  if (!topMode) return;
+  const activeId = TOP_PAGES[stack[0].pageIndex].id;
+  for (const page of TOP_PAGES) {
+    renderTopPageContent(page, page.id === activeId);
+  }
 }
 
 function adjustVolume(delta) {
@@ -152,100 +251,483 @@ function adjustVolume(delta) {
   if (next === cur) return;
   nowPlaying.volume = next; // optimistic; backend will echo back
   send({ type: "set_volume", value: next });
-  render();
+  updateNowPlayingMode();
 }
 
-function maybePrefetchPage(entry) {
+function updateNowPlayingMode() {
+  const modeEl = screenEl.querySelector(
+    '.page[data-page-id="now-playing"] .np-mode'
+  );
+  if (!modeEl) return;
+  modeEl.classList.toggle("scroll", nowPlayingMode === "scroll");
+  if (nowPlayingMode === "volume") {
+    const vol = `VOL ${nowPlaying.volume ?? 60}`;
+    modeEl.textContent = nowPlaying.paused ? `PAUSED · ${vol}` : vol;
+  } else {
+    modeEl.textContent =
+      nowPlaying.state === "idle"
+        ? "SCROLL MODE — ROTATE TO NAVIGATE"
+        : "SCROLL MODE — CLICK TO STOP, ROTATE TO NAVIGATE";
+  }
+}
+
+// ── Prefetch ───────────────────────────────────────────────────
+function maybePrefetchTopPage(page) {
+  const meta = deckMeta[page.deck];
+  if (!meta || !meta.hasMore || meta.pending) return;
+  const cards = visibleCards(page.deck);
+  if (!cards) return;
+  const entry = currentEntry();
+  const cur = entry.itemCursors[page.id] ?? 0;
+  if (cur >= cards.length - PAGE_PREFETCH_THRESHOLD) {
+    meta.pending = true;
+    send({ type: "request_deck", deck_id: page.deck, offset: meta.nextOffset });
+  }
+}
+
+function maybePrefetchDeck(entry) {
   const meta = deckMeta[entry.deck];
   if (!meta || !meta.hasMore || meta.pending) return;
-  const cards = decks[entry.deck];
+  const cards = visibleCards(entry.deck);
   if (!cards) return;
-  const trailingIdx = cards.length - 1; // Back to Top
-  if (entry.cursor >= trailingIdx - PAGE_PREFETCH_THRESHOLD) {
+  if (entry.cursor >= cards.length - PAGE_PREFETCH_THRESHOLD) {
     meta.pending = true;
     send({ type: "request_deck", deck_id: entry.deck, offset: meta.nextOffset });
   }
 }
 
-function click() {
-  const card = currentCard();
-  if (!card) return;
-  switch (card.kind) {
-    case "enter-deck":
-      enterDeck(card.deck);
-      break;
-    case "back":
-      goBack();
-      break;
-    case "back-to-top":
-      jumpToFirstContent();
-      break;
-    case "play":
-      send({ type: "play", card_id: card.id });
-      goToRoot();
-      break;
-    case "unplayable":
-      // No audio source — slice 6 will surface a "Not available" toast.
-      break;
-    case "now-playing":
-      if (nowPlayingMode === "volume") {
-        if (nowPlaying.state === "playing") {
-          send({ type: nowPlaying.paused ? "resume" : "pause" });
-        }
-      } else if (nowPlaying.state !== "idle") {
-        send({ type: "stop" });
-      }
-      break;
-  }
-}
-
-function enterDeck(deckId) {
-  stack.push({ deck: deckId, cursor: 0, cursorPlaced: false });
-  send({ type: "request_deck", deck_id: deckId, offset: 0 });
-  render();
-}
-
-function goBack() {
-  if (stack.length > 1) {
-    stack.pop();
-    render();
-  }
-}
-
-function goToRoot() {
-  stack.length = 1;
-  stack[0].cursor = 0;
-  stack[0].cursorPlaced = true;
-  nowPlayingMode = "volume"; // reset on snap-to-NP
-  render();
-}
-
-function jumpToFirstContent() {
+// ── Rendering ──────────────────────────────────────────────────
+function render() {
   const entry = currentEntry();
-  const cards = decks[entry.deck];
-  if (!cards || !cards.length) return;
-  entry.cursor = cards[0]?.kind === "back" ? 1 : 0;
-  entry.cursorPlaced = true;
-  render();
-}
-
-function prefetchArtwork(cards) {
-  for (const c of cards) {
-    if (c.artwork) {
-      const img = new Image();
-      img.src = c.artwork;
+  if (entry.level === "top") {
+    if (!topMode) {
+      buildTopCarousel();
+      topMode = true;
     }
+    updateTopTransform();
+    TOP_PAGES.forEach((p, i) => renderTopPageContent(p, i === entry.pageIndex));
+  } else {
+    topMode = false;
+    renderDeckPage(entry);
+  }
+  updateChrome();
+}
+
+function renderTopActivePage() {
+  if (!topMode) return;
+  const entry = currentEntry();
+  const page = TOP_PAGES[entry.pageIndex];
+  renderTopPageContent(page, true);
+}
+
+function updateChrome() {
+  const entry = currentEntry();
+  let label;
+  if (entry.level === "top") {
+    label = TOP_PAGES[entry.pageIndex].label;
+  } else {
+    label = deckLabel(entry.deck);
+  }
+  chromeLabelEl.textContent = label;
+}
+
+function updateTopTransform() {
+  const carousel = screenEl.querySelector(".carousel");
+  if (!carousel) return;
+  const entry = currentEntry();
+  carousel.style.transform = `translateY(-${entry.pageIndex * 100}%)`;
+}
+
+function buildTopCarousel() {
+  screenEl.innerHTML = "";
+  const carousel = document.createElement("div");
+  carousel.className = "carousel";
+  for (const page of TOP_PAGES) {
+    const pageEl = document.createElement("div");
+    pageEl.className = "page";
+    pageEl.dataset.pageId = page.id;
+    carousel.appendChild(pageEl);
+  }
+  screenEl.appendChild(carousel);
+}
+
+function renderTopPageContent(page, isActive) {
+  const pageEl = screenEl.querySelector(`.page[data-page-id="${page.id}"]`);
+  if (!pageEl) return;
+  if (page.kind === "now-playing") {
+    renderNowPlayingPage(pageEl);
+  } else if (page.kind === "live") {
+    renderLivePage(pageEl, isActive);
+  } else if (page.kind === "list") {
+    renderListPage(pageEl, page);
   }
 }
 
-function countContent(cards) {
-  let n = 0;
-  for (const c of cards) {
-    if (c.kind !== "back" && c.kind !== "back-to-top") n++;
-  }
-  return n;
+// ── Now Playing ────────────────────────────────────────────────
+// Build the scaffold once; every subsequent render mutates the existing
+// nodes in place. No DOM churn on time-pos ticks, no animation flicker.
+function ensureNowPlayingScaffold(pageEl) {
+  if (pageEl.dataset.npBuilt === "1") return;
+  pageEl.dataset.npBuilt = "1";
+  pageEl.innerHTML = `
+    <div class="page-bg-image" hidden></div>
+    <div class="page-bg-overlay"></div>
+    <div class="np-content">
+      <div class="np-eyebrow">
+        <span class="live-pip"></span>
+        <span class="np-status"></span>
+      </div>
+      <div class="spinner" hidden></div>
+      <h1 class="np-show"></h1>
+      <div class="np-sub" hidden></div>
+      <div class="np-progress" hidden>
+        <div class="np-progress-bar"><div class="np-progress-fill"></div></div>
+        <div class="np-progress-times">
+          <span class="np-time-elapsed"></span>
+          <span class="np-time-duration"></span>
+        </div>
+      </div>
+      <div class="np-mode"></div>
+    </div>
+  `;
 }
 
+function renderNowPlayingPage(pageEl) {
+  if (!pageEl) return;
+  ensureNowPlayingScaffold(pageEl);
+  const np = nowPlaying;
+
+  // Background image (hidden when idle/error or no artwork).
+  const bg = pageEl.querySelector(".page-bg-image");
+  const showImg = np.state !== "idle" && np.state !== "error" && !!np.artwork;
+  bg.hidden = !showImg;
+  if (showImg) {
+    const url = `url("${np.artwork}")`;
+    if (bg.style.backgroundImage !== url) bg.style.backgroundImage = url;
+  } else {
+    bg.style.backgroundImage = "";
+  }
+
+  // Eyebrow status + pip activity.
+  pageEl.querySelector(".np-status").textContent = eyebrowText(np);
+  const pip = pageEl.querySelector(".live-pip");
+  pip.classList.toggle("idle", !(np.state === "playing" && !np.paused));
+
+  // Spinner (loading only).
+  pageEl.querySelector(".spinner").hidden = np.state !== "loading";
+
+  // Title.
+  const show = pageEl.querySelector(".np-show");
+  const title =
+    np.state === "idle" ? "NOTHING PLAYING"
+      : np.state === "error" ? (np.error_message || "ERROR")
+      : (np.title || "LOADING…").toUpperCase();
+  if (show.textContent !== title) show.textContent = title;
+
+  // Subtitle.
+  const sub = pageEl.querySelector(".np-sub");
+  const subText =
+    np.state !== "idle" && np.state !== "error" && np.subtitle
+      ? np.subtitle.toUpperCase()
+      : "";
+  sub.hidden = !subText;
+  if (subText && sub.textContent !== subText) sub.textContent = subText;
+
+  // Progress block — non-live content with a known duration only.
+  const showProgress =
+    np.state === "playing" &&
+    !np.is_live &&
+    !!np.duration &&
+    np.duration > 0 &&
+    np.elapsed != null;
+  const prog = pageEl.querySelector(".np-progress");
+  prog.hidden = !showProgress;
+  if (showProgress) {
+    const pct = Math.min(100, (np.elapsed / np.duration) * 100);
+    pageEl.querySelector(".np-progress-fill").style.width = `${pct}%`;
+    pageEl.querySelector(".np-time-elapsed").textContent = formatElapsed(np.elapsed);
+    pageEl.querySelector(".np-time-duration").textContent = formatElapsed(np.duration);
+  }
+
+  // Mode indicator (volume / scroll).
+  updateNowPlayingMode();
+}
+
+function eyebrowText(np) {
+  if (np.state === "idle") return "STANDBY";
+  if (np.state === "loading") return "LOADING";
+  if (np.state === "error") return "ERROR";
+  if (np.state === "playing") {
+    return np.paused ? "PAUSED" : "ON AIR";
+  }
+  return np.state.toUpperCase();
+}
+
+// ── Live page (2 channels) ─────────────────────────────────────
+function ensureLiveScaffold(pageEl) {
+  if (pageEl.dataset.liveBuilt === "1") return;
+  pageEl.dataset.liveBuilt = "1";
+  pageEl.innerHTML = `<div class="live-grid"></div>`;
+}
+
+function renderLivePage(pageEl, isActive) {
+  ensureLiveScaffold(pageEl);
+  const grid = pageEl.querySelector(".live-grid");
+  const cards = visibleCards("live");
+
+  if (!cards) {
+    if (grid.dataset.liveSig !== "loading") {
+      grid.dataset.liveSig = "loading";
+      grid.innerHTML = "";
+      const loader = document.createElement("div");
+      loader.className = "loading-state";
+      loader.innerHTML = `<div class="spinner"></div><div class="loading-label">LOADING LIVE</div>`;
+      grid.appendChild(loader);
+    }
+    return;
+  }
+
+  // Rebuild grid only when channel set changes.
+  const sig = cards.map((c) => c.id).join("|");
+  if (grid.dataset.liveSig !== sig) {
+    grid.dataset.liveSig = sig;
+    grid.innerHTML = "";
+    cards.forEach((card, i) => {
+      const cardEl = document.createElement("div");
+      cardEl.className = "live-card";
+      cardEl.dataset.i = String(i);
+
+      const bg = document.createElement("div");
+      bg.className = "bg-image";
+      if (card.artwork) bg.style.backgroundImage = `url("${card.artwork}")`;
+      cardEl.appendChild(bg);
+
+      const overlay = document.createElement("div");
+      overlay.className = "bg-overlay";
+      cardEl.appendChild(overlay);
+
+      const inner = document.createElement("div");
+      inner.className = "live-card-inner";
+
+      const ch = document.createElement("div");
+      ch.className = "live-ch";
+      const pip = document.createElement("span");
+      pip.className = "live-pip";
+      ch.appendChild(pip);
+      const chLabel = document.createElement("span");
+      chLabel.textContent = (card.label || "").toUpperCase();
+      ch.appendChild(chLabel);
+      inner.appendChild(ch);
+
+      if (card.subtitle) {
+        const show = document.createElement("div");
+        show.className = "live-show";
+        show.textContent = card.subtitle.toUpperCase();
+        inner.appendChild(show);
+      }
+
+      cardEl.appendChild(inner);
+      grid.appendChild(cardEl);
+    });
+  }
+
+  // Update focus highlighting in place.
+  const entry = currentEntry();
+  const focused = entry.level === "top" ? (entry.itemCursors.live ?? 0) : 0;
+  grid.querySelectorAll(".live-card").forEach((cardEl) => {
+    const i = parseInt(cardEl.dataset.i, 10);
+    cardEl.classList.toggle("on", i === focused && isActive);
+  });
+}
+
+// ── List page (top-level Moods/Mixtapes/Genres OR drilled deck) ─
+function renderListPage(pageEl, page) {
+  const cards = visibleCards(page.deck);
+  if (!cards) {
+    renderLoading(pageEl, `LOADING ${page.label}`);
+    return;
+  }
+  const entry = currentEntry();
+  const focused = entry.level === "top" ? (entry.itemCursors[page.id] ?? 0) : 0;
+  buildOrUpdateList(pageEl, {
+    title: page.label,
+    subtitle: subtitleForPage(page, cards),
+    cards,
+    focused,
+  });
+}
+
+function renderDeckPage(entry) {
+  // Clear top-level DOM
+  screenEl.innerHTML = "";
+  const pageEl = document.createElement("div");
+  pageEl.className = "list-page";
+  screenEl.appendChild(pageEl);
+
+  const cards = visibleCards(entry.deck);
+  if (!cards) {
+    renderLoading(pageEl, `LOADING ${deckLabel(entry.deck)}`);
+    return;
+  }
+  const focused = Math.max(0, Math.min(cards.length - 1, entry.cursor));
+  entry.cursor = focused;
+  buildOrUpdateList(pageEl, {
+    title: deckLabel(entry.deck),
+    subtitle: subtitleForCount(cards),
+    cards,
+    focused,
+  });
+}
+
+function updateDeckPageFocus() {
+  const entry = currentEntry();
+  if (entry.level === "top") return;
+  const cards = visibleCards(entry.deck);
+  if (!cards) return;
+  const pageEl = screenEl.querySelector(".list-page");
+  if (!pageEl) {
+    renderDeckPage(entry);
+    return;
+  }
+  buildOrUpdateList(pageEl, {
+    title: deckLabel(entry.deck),
+    subtitle: subtitleForCount(cards),
+    cards,
+    focused: entry.cursor,
+  });
+}
+
+function subtitleForPage(page, cards) {
+  if (page.id === "moods") return "SELECT A MOOD";
+  if (page.id === "mixtapes") return "ALWAYS ON, ALWAYS DIFFERENT";
+  if (page.id === "genres") return "SELECT A GENRE";
+  return subtitleForCount(cards);
+}
+
+function subtitleForCount(cards) {
+  return `${cards.length} ITEM${cards.length === 1 ? "" : "S"}`;
+}
+
+function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
+  const sig = `${title}|${cards.length}|${cards.map((c) => c.id).join(",")}`;
+  const existingSig = pageEl.dataset.listSig;
+
+  if (existingSig !== sig) {
+    pageEl.dataset.listSig = sig;
+    pageEl.innerHTML = "";
+
+    const bg = document.createElement("div");
+    bg.className = "bg-image list-bg-image";
+    pageEl.appendChild(bg);
+
+    const overlay = document.createElement("div");
+    overlay.className = "bg-overlay list-overlay";
+    pageEl.appendChild(overlay);
+
+    const header = document.createElement("div");
+    header.className = "list-header";
+    const titleEl = document.createElement("div");
+    titleEl.className = "list-title";
+    titleEl.textContent = title;
+    header.appendChild(titleEl);
+    if (subtitle) {
+      const subEl = document.createElement("div");
+      subEl.className = "list-sub";
+      subEl.textContent = subtitle;
+      header.appendChild(subEl);
+    }
+    pageEl.appendChild(header);
+
+    const scroll = document.createElement("div");
+    scroll.className = "list-scroll";
+    scroll.appendChild(spacer());
+
+    cards.forEach((card, i) => {
+      const row = document.createElement("div");
+      row.className = "list-row" + (card.kind === "unplayable" ? " unplayable" : "");
+      row.dataset.i = String(i);
+
+      const num = document.createElement("span");
+      num.className = "list-num";
+      num.textContent = String(i + 1).padStart(2, "0");
+      row.appendChild(num);
+
+      const name = document.createElement("span");
+      name.className = "list-name";
+      name.textContent = (card.label || "").toUpperCase();
+      row.appendChild(name);
+
+      if (card.subtitle) {
+        const sub = document.createElement("span");
+        sub.className = "list-sub-row";
+        sub.textContent = card.subtitle.toUpperCase();
+        row.appendChild(sub);
+      }
+
+      const marker = document.createElement("span");
+      marker.className = "list-marker";
+      row.appendChild(marker);
+
+      scroll.appendChild(row);
+    });
+
+    scroll.appendChild(spacer());
+    pageEl.appendChild(scroll);
+  }
+
+  // Update focus highlighting + bg image
+  applyListFocus(pageEl, cards, focused);
+}
+
+function applyListFocus(pageEl, cards, focused) {
+  const focusedCard = cards[focused];
+  const bg = pageEl.querySelector(".list-bg-image");
+  if (bg) {
+    bg.style.backgroundImage = focusedCard?.artwork
+      ? `url("${focusedCard.artwork}")`
+      : "";
+  }
+
+  const rows = pageEl.querySelectorAll(".list-row");
+  rows.forEach((row) => {
+    const i = parseInt(row.dataset.i, 10);
+    const dist = Math.abs(i - focused);
+    row.classList.toggle("on", i === focused);
+    row.style.opacity = i === focused ? "1" : String(Math.max(0.18, 0.7 - dist * 0.15));
+  });
+
+  const focusedRow = pageEl.querySelector(`.list-row[data-i="${focused}"]`);
+  const scroll = pageEl.querySelector(".list-scroll");
+  if (focusedRow && scroll) {
+    const elRect = scroll.getBoundingClientRect();
+    const itemRect = focusedRow.getBoundingClientRect();
+    const offset =
+      itemRect.top - elRect.top - elRect.height / 2 + itemRect.height / 2;
+    scroll.scrollBy({ top: offset, behavior: "smooth" });
+  }
+}
+
+function spacer() {
+  const s = document.createElement("div");
+  s.className = "list-spacer";
+  return s;
+}
+
+function renderLoading(el, label) {
+  el.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "loading-state";
+  const spinner = document.createElement("div");
+  spinner.className = "spinner";
+  wrap.appendChild(spinner);
+  const lab = document.createElement("div");
+  lab.className = "loading-label";
+  lab.textContent = label;
+  wrap.appendChild(lab);
+  el.appendChild(wrap);
+}
+
+// ── Deck data handling ─────────────────────────────────────────
 function handleDeckData(msg) {
   const deckId = msg.deck_id;
   const offset = msg.offset || 0;
@@ -261,38 +743,48 @@ function handleDeckData(msg) {
   } else {
     const existing = decks[deckId];
     const meta = deckMeta[deckId];
-    // Stale page — current state isn't expecting this offset, ignore.
     if (!existing || !meta || meta.nextOffset !== offset) return;
-    const trailingIdx = existing.length - 1; // Back to Top
-    existing.splice(trailingIdx, 0, ...cards);
+    // Append before the trailing back-to-top if it exists; otherwise append at end.
+    const trailingIdx = existing.findIndex((c) => c.kind === "back-to-top");
+    if (trailingIdx >= 0) {
+      existing.splice(trailingIdx, 0, ...cards);
+    } else {
+      existing.push(...cards);
+    }
     meta.hasMore = !!msg.has_more;
     meta.nextOffset += cards.length;
     meta.pending = false;
   }
   prefetchArtwork(cards);
-  if (currentEntry().deck === deckId) render();
-}
 
-function longPress() {
-  const card = currentCard();
-  if (card && card.kind === "now-playing") {
-    nowPlayingMode = nowPlayingMode === "volume" ? "scroll" : "volume";
-    render();
-    return;
-  }
-  if (stack.length > 1) {
-    goBack();
-  } else {
-    jumpToFirstContent();
+  // Re-render whichever surface is showing this deck
+  const entry = currentEntry();
+  if (entry.level === "top") {
+    const page = TOP_PAGES.find((p) => p.deck === deckId);
+    if (page && topMode) renderTopPageContent(page, page.id === TOP_PAGES[entry.pageIndex].id);
+  } else if (entry.deck === deckId) {
+    renderDeckPage(entry);
   }
 }
 
-function handleEncoder(event) {
-  if (event.event === "rotate") rotate(event.direction);
-  else if (event.event === "click") click();
-  else if (event.event === "long_press") longPress();
+function countContent(cards) {
+  let n = 0;
+  for (const c of cards) {
+    if (c.kind !== "back" && c.kind !== "back-to-top") n++;
+  }
+  return n;
 }
 
+function prefetchArtwork(cards) {
+  for (const c of cards) {
+    if (c.artwork) {
+      const img = new Image();
+      img.src = c.artwork;
+    }
+  }
+}
+
+// ── WebSocket ──────────────────────────────────────────────────
 let ws;
 let pressTimer = null;
 let longPressed = false;
@@ -306,7 +798,12 @@ function send(msg) {
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.addEventListener("open", () => {
-    send({ type: "request_deck", deck_id: "root", offset: 0 });
+    // Pre-fetch all top-level decks so the carousel pages have data on first scroll.
+    for (const page of TOP_PAGES) {
+      if (page.deck) {
+        send({ type: "request_deck", deck_id: page.deck, offset: 0 });
+      }
+    }
   });
   ws.addEventListener("message", (e) => {
     let msg;
@@ -319,18 +816,36 @@ function connect() {
     else if (msg.type === "deck_data") handleDeckData(msg);
     else if (msg.type === "now_playing") {
       nowPlaying = msg;
-      if (currentCard()?.kind === "now-playing") render();
+      // Refresh now-playing page if visible.
+      const entry = currentEntry();
+      if (entry.level === "top" && TOP_PAGES[entry.pageIndex].kind === "now-playing") {
+        renderTopActivePage();
+      } else if (entry.level === "top") {
+        // NP card off-screen but still in DOM — keep it fresh too.
+        renderNowPlayingPage(screenEl.querySelector('.page[data-page-id="now-playing"]'));
+      }
     }
   });
   ws.addEventListener("close", () => setTimeout(connect, 500));
 }
 
+function handleEncoder(event) {
+  if (event.event === "rotate") {
+    moveCursor(event.direction === "cw" ? "next" : "prev");
+  } else if (event.event === "click") {
+    click();
+  } else if (event.event === "long_press") {
+    longPress();
+  }
+}
+
+// ── Keyboard simulation ────────────────────────────────────────
 document.addEventListener("keydown", (e) => {
   if (e.repeat && e.key === "Enter") return;
-  if (e.key === "ArrowLeft") {
+  if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
     send({ type: "encoder", event: "rotate", direction: "ccw", velocity: 1 });
     e.preventDefault();
-  } else if (e.key === "ArrowRight") {
+  } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
     send({ type: "encoder", event: "rotate", direction: "cw", velocity: 1 });
     e.preventDefault();
   } else if (e.key === "Enter" && pressTimer === null) {
@@ -354,5 +869,13 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
+// ── Clock ──────────────────────────────────────────────────────
+function tickClock() {
+  chromeTimeEl.textContent = formatTimeOfDay(new Date());
+}
+tickClock();
+setInterval(tickClock, 1000 * 30);
+
+// ── Boot ───────────────────────────────────────────────────────
 render();
 connect();

@@ -4,12 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>NTS Pi Player</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
     <main id="stage">
-      <div id="card" class="card"></div>
-      <div id="hint">← →  rotate · Enter  click · hold Enter  long-press</div>
+      <div class="chrome">
+        <div class="chrome-left">
+          <span class="chrome-mark">NTS</span>
+          <span class="chrome-divider"></span>
+          <span id="chrome-label">—</span>
+        </div>
+        <div class="chrome-right">
+          <span id="chrome-time" class="chrome-time">--:--</span>
+        </div>
+      </div>
+      <div id="screen"></div>
+      <div id="hint">↑↓ ←→  rotate · Enter  click · hold Enter  long-press</div>
     </main>
     <script type="module" src="/static/carousel.js"></script>
   </body>

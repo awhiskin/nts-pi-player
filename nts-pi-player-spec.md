@@ -236,80 +236,63 @@ NTS is a small, supporter-funded operation. Be a polite client:
 
 ## 6. UI specification
 
-### 6.1 The carousel model
+### 6.1 The interaction model
 
-The entire viewport shows **one card at a time**. Rotating the encoder swaps the whole screen to the next card with a transition. Big, bold, immediately clear what you're looking at. NTS' own response data includes large square artwork (`picture_large`, `image.large`) per show / episode / mixtape — use it as the card background.
+Two layers of navigation:
 
-The screen never shows a list. Only ever one card.
+1. **Top-level page carousel** — a vertical stack of five pages: `[Now Playing] [Live] [Moods] [Mixtapes] [Genres]`. Encoder rotation moves between pages with a short slide transition.
 
-### 6.2 Decks
+2. **Within-page item focus** — list pages (Moods/Mixtapes/Genres and any drilled-in sub-deck) contain a vertical list of items. Encoder rotation moves the focus down/up the list; the focused row is enlarged and gets the page background. When focus reaches the end of a list, one more rotation tick "bounces" to the next/prev top-level page.
 
-A "deck" is an ordered list of cards. Decks are nested.
+Big, bold typography. Background imagery (NTS `picture_large` / `image.large`) follows the focused item on list pages and the playing item on Now Playing — full-bleed, with a darkening gradient overlay so type stays legible.
 
-**Root deck:**
+### 6.2 Pages and decks
 
-```
-[Now Playing] [Live] [Mixtapes] [Moods] [Genres] [Back to Top]
-```
+The five top-level pages map to backend deck data as follows:
 
-**Live deck:**
+| Page         | Layout              | Backend deck    |
+|--------------|---------------------|-----------------|
+| Now Playing  | hero card           | (none — driven by `now_playing` state) |
+| Live         | two-channel stacked | `live`          |
+| Moods        | list                | `moods`         |
+| Mixtapes     | list                | `mixtapes`      |
+| Genres       | list                | `genres`        |
 
-```
-[Back] [Channel 1] [Channel 2] [Back to Top]
-```
+A "deck" is still an ordered list of cards delivered by the backend. Drilling into a list item pushes a new list-page onto a stack:
 
-**Mixtapes deck:**
+- Click a **mood** → push an episode deck for that mood.
+- Click a **genre** → push the genre's detail deck (subgenres + "All ").
+  - Click any of those → push an episode deck.
+- Click an **episode** / **channel** / **mixtape** → start playback and pop back to top-level Now Playing.
 
-```
-[Back] [Poolside] [Slow Focus] [Low Key] ... (~33 mixtapes) [Back to Top]
-```
+Top-level pages are pre-fetched on app boot so scrolling between them feels instant. Sub-decks (genre detail, episode lists) are fetched on drill-down.
 
-**Genres deck:**
+### 6.3 No back rows
 
-```
-[Back] [Ambient / New Age] [Electronica / Downtempo] ... (20 entries) [Back to Top]
-```
+The legacy `[Back]` and `[Back to Top]` rows are **not rendered**. Both gestures are handled implicitly:
 
-**Genre detail deck** (e.g. after clicking "Ambient / New Age"):
+- **Long-press** anywhere is the universal back gesture (pop the stack one level). At top-level it returns the page cursor to Now Playing.
+- "Back to top" of a long list is unnecessary in the new model — the focused row scrolls into view automatically as the user moves through the list.
 
-```
-[Back] [All Ambient / New Age] [Subgenre: Ambient] [Subgenre: Fourth World] ... [Episode list] [Back to Top]
-```
+The backend still emits `back` and `back-to-top` cards in deck payloads for compatibility; the frontend filters them out before rendering.
 
-Selecting "All …" or any subgenre row enters an **episode deck**: a paginated list of NTS episodes for that filter, with `[Back]` prepended and `[Back to Top]` appended.
+### 6.4 Now Playing page
 
-**Moods deck:** structurally identical to Genres deck.
+Hero layout. Content from top to bottom:
 
-### 6.3 Mandatory rows
+- **Eyebrow** (mono, all-caps): a pulsing live pip + status word (`STANDBY` / `LOADING` / `ON AIR` / `PAUSED` / `ERROR`).
+- **Show / track title** — massive bold uppercase, the dominant element on screen.
+- **Subtitle** — show name, mixtape name, or "LIVE — Channel 1".
+- **Progress** — accent-colored bar plus elapsed/duration in mono. For live streams (no duration) the right side reads `LIVE`.
+- **Mode indicator** — `VOL N` (or `PAUSED · VOL N`) in volume mode; `SCROLL MODE — …` in scroll mode. Always visible regardless of playback state, so the user can tell which gesture set is active.
 
-Every deck — **including root** — ends with a `[Back to Top]` row. Every non-root deck **also** starts with a `[Back]` row.
-
-- `[Back]` → unwinds one deck level (e.g. genre detail → genres list). Reachable by scrolling counter-clockwise from the default cursor, or via long-press anywhere.
-- `[Back to Top]` → scrolls the cursor to the first content row of the **current deck**. It does **not** navigate up a level — that's what `[Back]` and long-press are for. The intended use is jumping back to the top of a long list (e.g. an episode deck) without abandoning the deck.
-
-**Default cursor on deck entry.** When a deck is freshly pushed onto the stack, the cursor lands on the **first real content row**, not on `[Back]`:
-
-- On root (initial state): cursor on `[Now Playing]` (index 0).
-- On any non-root deck: cursor on the row immediately after `[Back]` (index 1).
-
-This means `Click` on entry never triggers Back — the user came to do something, and the default action should be the most likely intent. `[Back]` is therefore mostly a discoverability fallback; long-press is the primary back gesture.
-
-### 6.4 Now Playing card
-
-Now Playing is a card in the root deck like any other, but its content is dynamic and its gesture handlers are different.
-
-Content:
-- Large artwork of currently playing item.
-- Track / show title.
-- Subtitle (e.g. show name, mixtape name, "LIVE — Channel 1").
-- Elapsed / total time (where applicable — live streams have no total).
-- Visual indicator of current mode (volume mode by default; scroll mode when toggled in).
-
-When nothing is playing: show an idle state ("Nothing playing"), but the card is still selectable and the gestures still apply (click does nothing, long-press toggles to scroll mode).
+Background: full-bleed artwork when something is playing/loading; flat ink when idle/error.
 
 ### 6.5 Visual transitions
 
-Card-to-card transition on rotate: short slide animation (~150-200ms), in the rotation direction. Long enough to read as motion, short enough not to delay rapid scrolling. Disable transitions during velocity-accelerated scrolling (see 7.2).
+- **Page-to-page** (top-level rotate): vertical slide, ~180ms, cubic-bezier(0.7, 0, 0.2, 1). Disable during velocity-accelerated scrolling (see 7.2).
+- **List item focus**: focused row's font-size + padding animate over ~320ms; neighbour rows fade by distance from focus. The list auto-scrolls to keep the focus near vertical center.
+- **Now Playing entry**: title fades + slides up ~12px over 320ms when state transitions from idle/loading to playing.
 
 ---
 
@@ -319,16 +302,20 @@ The complete gesture set:
 
 | Where | Gesture | Action |
 |---|---|---|
-| Any non-Now-Playing card | Rotate | Move carousel to next/previous card |
-| Any non-Now-Playing card | Click | Select / drill into card |
-| Any non-Now-Playing card, in a sub-deck | Long-press | Equivalent to selecting `[Back]` row (unwind one deck level) |
-| Any non-Now-Playing card, on the root deck | Long-press | Cursor returns to Now Playing |
+| Any list page (top-level or drilled), interior of list | Rotate | Move focus to next/previous item in the list |
+| Any list page, edge of list | Rotate (past edge) | Bounce to the prev/next top-level page (or no-op at extremes) |
+| Live page | Rotate | Move focus between Channel 1 / Channel 2 (then bounce as above) |
+| Any list / Live page | Click | Drill into focused item (sub-deck) or play (terminal item) |
+| Any list / Live page (drilled in) | Long-press | Pop one stack level (back) |
+| Any list / Live page (top-level) | Long-press | Return to Now Playing page |
 | Now Playing (in volume mode) | Rotate | Volume up / down |
-| Now Playing (in volume mode) | Click | Play / Pause |
+| Now Playing (in volume mode) | Click | Play / Pause (only while playing) |
 | Now Playing (in volume mode) | Long-press | Switch to scroll mode |
-| Now Playing (in scroll mode) | Rotate | Move carousel (root deck) |
-| Now Playing (in scroll mode) | Click | Drill into selected card |
+| Now Playing (in scroll mode) | Rotate | Move to prev/next top-level page |
+| Now Playing (in scroll mode) | Click | Stop playback (no-op when idle) |
 | Now Playing (in scroll mode) | Long-press | Switch back to volume mode |
+
+**Encoder ↔ keyboard mapping for development:** `←` / `↑` rotate counter-clockwise (move to previous item / page); `→` / `↓` rotate clockwise (next item / page). Both pairs are bound so the simulation matches the visual axis (vertical) without losing the original horizontal binding.
 
 ### 7.1 Long-press timing
 

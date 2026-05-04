@@ -32,6 +32,9 @@ _episode_audio: dict[str, str] = {}
 # card_id -> {"title", "subtitle", "artwork"} for now_playing display.
 _card_meta: dict[str, dict] = {}
 
+# What's currently loaded in the player (drives live-aware pause/resume).
+_current_card_id: Optional[str] = None
+
 now_playing: dict = {
     "state": "idle",
     "title": "",
@@ -40,8 +43,18 @@ now_playing: dict = {
     "elapsed": None,
     "duration": None,
     "paused": False,
+    "is_live": False,
     "volume": DEFAULT_VOLUME,
 }
+
+
+def _is_live_card(card_id: Optional[str]) -> bool:
+    """Live channels and Infinite Mixtapes are continuous streams: no
+    meaningful duration, and pause/resume should re-join the live edge
+    rather than play buffered audio."""
+    if not card_id:
+        return False
+    return card_id in LIVE_STREAMS or card_id.startswith("mixtape:")
 
 
 async def broadcast(message: dict) -> None:
@@ -117,6 +130,7 @@ async def on_mpv_event(event: dict) -> None:
 
 
 def _reset_now_playing() -> None:
+    global _current_card_id
     now_playing.update({
         "state": "idle",
         "title": "",
@@ -125,8 +139,10 @@ def _reset_now_playing() -> None:
         "elapsed": None,
         "duration": None,
         "paused": False,
+        "is_live": False,
     })
     now_playing.pop("error_message", None)
+    _current_card_id = None
 
 
 @asynccontextmanager
@@ -195,10 +211,21 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         await push_now_playing()
         return
     if msg_type == "pause":
-        await player.pause()
+        # Live-style streams (channels + mixtapes) can't be meaningfully
+        # paused — buffered audio diverges from the live edge. Stop the
+        # stream instead and surface as paused; resume re-issues play.
+        if _is_live_card(_current_card_id):
+            await player.stop()
+            now_playing["paused"] = True
+            await push_now_playing()
+        else:
+            await player.pause()
         return
     if msg_type == "resume":
-        await player.resume()
+        if _is_live_card(_current_card_id) and now_playing.get("paused"):
+            asyncio.create_task(_handle_play(_current_card_id))
+        else:
+            await player.resume()
         return
     if msg_type == "set_volume":
         try:
@@ -214,6 +241,8 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
 
 
 async def _handle_play(card_id: Optional[str]) -> None:
+    global _current_card_id
+    _current_card_id = card_id
     meta = _card_meta.get(card_id or "", {})
     now_playing["state"] = "loading"
     now_playing["title"] = meta.get("title") or ""
@@ -222,6 +251,7 @@ async def _handle_play(card_id: Optional[str]) -> None:
     now_playing["elapsed"] = None
     now_playing["duration"] = None
     now_playing["paused"] = False
+    now_playing["is_live"] = _is_live_card(card_id)
     now_playing.pop("error_message", None)
     await push_now_playing()
 
