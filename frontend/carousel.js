@@ -20,6 +20,7 @@ const DECK_LABELS = {
 const screenEl = document.getElementById("screen");
 const chromeLabelEl = document.getElementById("chrome-label");
 const chromeTimeEl = document.getElementById("chrome-time");
+const chromeDotsEl = document.getElementById("chrome-dots");
 
 const decks = {};
 const deckMeta = {};
@@ -323,12 +324,33 @@ function renderTopActivePage() {
 function updateChrome() {
   const entry = currentEntry();
   let label;
+  let topIndex;
   if (entry.level === "top") {
-    label = TOP_PAGES[entry.pageIndex].label;
+    topIndex = entry.pageIndex;
+    label = TOP_PAGES[topIndex].label;
   } else {
+    // Keep the parent top-level page lit so the user retains spatial context
+    // while drilled into a sub-deck.
+    topIndex = stack[0].pageIndex;
     label = deckLabel(entry.deck);
   }
   chromeLabelEl.textContent = label;
+  updateChromeDots(topIndex);
+}
+
+function updateChromeDots(activeIndex) {
+  if (!chromeDotsEl) return;
+  if (chromeDotsEl.children.length !== TOP_PAGES.length) {
+    chromeDotsEl.innerHTML = "";
+    for (let i = 0; i < TOP_PAGES.length; i++) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      chromeDotsEl.appendChild(dot);
+    }
+  }
+  for (let i = 0; i < chromeDotsEl.children.length; i++) {
+    chromeDotsEl.children[i].classList.toggle("on", i === activeIndex);
+  }
 }
 
 function updateTopTransform() {
@@ -408,10 +430,20 @@ function renderNowPlayingPage(pageEl) {
     bg.style.backgroundImage = "";
   }
 
-  // Eyebrow status + pip activity.
-  pageEl.querySelector(".np-status").textContent = eyebrowText(np);
+  // Eyebrow: the live pip is exclusive to live channels (1/2). It pulses
+  // when actively playing, sits dim while loading/paused/error, and is
+  // hidden entirely for mixtapes / episodes / idle. The eyebrow row itself
+  // hides when there's nothing meaningful to say (e.g. a past episode is
+  // playing — title and subtitle carry all the info).
+  const eyebrow = pageEl.querySelector(".np-eyebrow");
+  const eyebrowStr = eyebrowText(np);
+  pageEl.querySelector(".np-status").textContent = eyebrowStr;
+  const isLive = np.card_kind === "live";
+  const pulsing = isLive && np.state === "playing" && !np.paused;
   const pip = pageEl.querySelector(".live-pip");
-  pip.classList.toggle("idle", !(np.state === "playing" && !np.paused));
+  pip.hidden = !isLive;
+  pip.classList.toggle("idle", !pulsing);
+  eyebrow.hidden = !eyebrowStr;
 
   // Spinner (loading only).
   pageEl.querySelector(".spinner").hidden = np.state !== "loading";
@@ -458,7 +490,11 @@ function eyebrowText(np) {
   if (np.state === "loading") return "LOADING";
   if (np.state === "error") return "ERROR";
   if (np.state === "playing") {
-    return np.paused ? "PAUSED" : "ON AIR";
+    if (np.paused) return "PAUSED";
+    if (np.card_kind === "live") return "ON AIR";
+    if (np.card_kind === "mixtape") return "INFINITE MIXTAPE";
+    // Episodes (and unknown kinds): no eyebrow text — the title carries it.
+    return "";
   }
   return np.state.toUpperCase();
 }

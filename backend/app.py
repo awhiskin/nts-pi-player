@@ -44,6 +44,7 @@ now_playing: dict = {
     "duration": None,
     "paused": False,
     "is_live": False,
+    "card_kind": "",
     "volume": DEFAULT_VOLUME,
 }
 
@@ -55,6 +56,20 @@ def _is_live_card(card_id: Optional[str]) -> bool:
     if not card_id:
         return False
     return card_id in LIVE_STREAMS or card_id.startswith("mixtape:")
+
+
+def _card_kind(card_id: Optional[str]) -> str:
+    """One of "live" / "mixtape" / "episode" / "" — drives UI eyebrow
+    styling on the Now Playing card."""
+    if not card_id:
+        return ""
+    if card_id in LIVE_STREAMS:
+        return "live"
+    if card_id.startswith("mixtape:"):
+        return "mixtape"
+    if card_id.startswith("episode:"):
+        return "episode"
+    return ""
 
 
 async def broadcast(message: dict) -> None:
@@ -140,6 +155,7 @@ def _reset_now_playing() -> None:
         "duration": None,
         "paused": False,
         "is_live": False,
+        "card_kind": "",
     })
     now_playing.pop("error_message", None)
     _current_card_id = None
@@ -252,6 +268,7 @@ async def _handle_play(card_id: Optional[str]) -> None:
     now_playing["duration"] = None
     now_playing["paused"] = False
     now_playing["is_live"] = _is_live_card(card_id)
+    now_playing["card_kind"] = _card_kind(card_id)
     now_playing.pop("error_message", None)
     await push_now_playing()
 

@@ -57,6 +57,13 @@ body {
   color: rgba(244, 241, 234, 0.78);
   z-index: 10;
   pointer-events: none;
+}
+
+/* Difference-blend the text/divider only, so the accent dots stay true orange. */
+.chrome-mark,
+.chrome-divider,
+#chrome-label,
+.chrome-time {
   mix-blend-mode: difference;
 }
 
@@ -84,6 +91,27 @@ body {
 
 .chrome-time {
   font-variant-numeric: tabular-nums;
+}
+
+.chrome-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  isolation: isolate;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(244, 241, 234, 0.5);
+  transform: scale(1);
+  transition: background 220ms ease, transform 220ms ease;
+}
+
+.dot.on {
+  transform: scale(1.4);
+  background: var(--accent);
 }
 
 /* ── Page carousel (top-level, vertical) ─────────────── */
