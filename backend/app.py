@@ -52,6 +52,7 @@ now_playing: dict = {
     "paused": False,
     "is_live": False,
     "card_kind": "",
+    "card_id": None,
     "volume": DEFAULT_VOLUME,
 }
 
@@ -111,8 +112,13 @@ async def on_mpv_event(event: dict) -> None:
         data = event.get("data")
         if prop == "time-pos":
             # Throttle: only push when elapsed second actually advances.
+            # Skip the broadcast entirely for live-style streams — they
+            # don't render a progress bar so the once-per-second update
+            # is pure DOM churn on the client.
             old = now_playing["elapsed"]
             now_playing["elapsed"] = data
+            if now_playing.get("is_live"):
+                return
             old_int = int(old) if old is not None else None
             new_int = int(data) if data is not None else None
             if new_int != old_int:
@@ -120,6 +126,8 @@ async def on_mpv_event(event: dict) -> None:
         elif prop == "duration":
             old = now_playing["duration"]
             now_playing["duration"] = data
+            if now_playing.get("is_live"):
+                return
             old_int = int(old) if old is not None else None
             new_int = int(data) if data is not None else None
             if new_int != old_int:
@@ -175,6 +183,7 @@ def _reset_now_playing() -> None:
         "paused": False,
         "is_live": False,
         "card_kind": "",
+        "card_id": None,
     })
     now_playing.pop("error_message", None)
     _current_card_id = None
@@ -298,6 +307,7 @@ async def _handle_play(card_id: Optional[str], queue: Optional[list[str]] = None
     now_playing["paused"] = False
     now_playing["is_live"] = _is_live_card(card_id)
     now_playing["card_kind"] = _card_kind(card_id)
+    now_playing["card_id"] = card_id
     now_playing.pop("error_message", None)
     await push_now_playing()
 

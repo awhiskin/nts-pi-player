@@ -92,9 +92,11 @@ function moveTopCursor(direction) {
   const page = TOP_PAGES[entry.pageIndex];
   const delta = direction === "next" ? 1 : -1;
 
-  // Now-playing: in volume mode, encoder = volume.
+  // Now-playing: in volume mode, encoder = volume. Direction is inverted
+  // vs navigation — pushing "up" (ccw / ↑ / ←) raises volume, matching
+  // typical volume sliders.
   if (page.kind === "now-playing" && nowPlayingMode === "volume") {
-    adjustVolume(delta * VOLUME_STEP);
+    adjustVolume(-delta * VOLUME_STEP);
     return;
   }
 
@@ -177,7 +179,15 @@ function triggerCard(card) {
   if (card.kind === "enter-deck") {
     enterDeck(card.deck, card.label);
   } else if (card.kind === "play") {
-    send({ type: "play", card_id: card.id, queue: queueForCurrentContext() });
+    // If this exact item is already playing or about to play, don't
+    // re-issue the play (which would reload the stream / restart the
+    // episode). Just snap to Now Playing so the user sees what's on.
+    const sameAsCurrent =
+      card.id === nowPlaying.card_id &&
+      (nowPlaying.state === "playing" || nowPlaying.state === "loading");
+    if (!sameAsCurrent) {
+      send({ type: "play", card_id: card.id, queue: queueForCurrentContext() });
+    }
     goToTopLevel();
   }
   // unplayable: no-op
@@ -416,9 +426,9 @@ function ensureNowPlayingScaffold(pageEl) {
     <div class="np-content">
       <div class="np-eyebrow">
         <span class="live-pip"></span>
+        <span class="eyebrow-spinner" hidden></span>
         <span class="np-status"></span>
       </div>
-      <div class="spinner" hidden></div>
       <h1 class="np-show"></h1>
       <div class="np-sub" hidden></div>
       <div class="np-progress" hidden>
@@ -453,22 +463,22 @@ function renderNowPlayingPage(pageEl) {
   }
 
   // Eyebrow: the live pip is exclusive to live channels (1/2). It pulses
-  // when actively playing, sits dim while loading/paused/error, and is
-  // hidden entirely for mixtapes / episodes / idle. The eyebrow row itself
-  // hides when there's nothing meaningful to say (e.g. a past episode is
-  // playing — title and subtitle carry all the info).
+  // when actively playing, sits dim while paused/error, and is hidden for
+  // mixtapes / episodes / idle. While loading, the pip is replaced by a
+  // small inline spinner so the marker keeps its position next to the
+  // status word. The eyebrow row hides when there's nothing meaningful to
+  // say (e.g. a past episode is playing — title carries the info).
   const eyebrow = pageEl.querySelector(".np-eyebrow");
   const eyebrowStr = eyebrowText(np);
   pageEl.querySelector(".np-status").textContent = eyebrowStr;
   const isLive = np.card_kind === "live";
+  const isLoading = np.state === "loading";
   const pulsing = isLive && np.state === "playing" && !np.paused;
   const pip = pageEl.querySelector(".live-pip");
-  pip.hidden = !isLive;
+  pip.hidden = isLoading || !isLive;
   pip.classList.toggle("idle", !pulsing);
+  pageEl.querySelector(".eyebrow-spinner").hidden = !isLoading;
   eyebrow.hidden = !eyebrowStr;
-
-  // Spinner (loading only).
-  pageEl.querySelector(".spinner").hidden = np.state !== "loading";
 
   // Title.
   const show = pageEl.querySelector(".np-show");
@@ -913,8 +923,30 @@ document.addEventListener("keydown", (e) => {
       send({ type: "encoder", event: "long_press" });
     }, LONG_PRESS_MS);
     e.preventDefault();
+  } else if (e.key === "Escape") {
+    send({ type: "encoder", event: "long_press" });
+    e.preventDefault();
   }
 });
+
+// Trackpad / mouse wheel → rotary encoder rotate. Accumulates deltaY across
+// fine-grained trackpad events so each discrete encoder tick fires after a
+// reasonable amount of swipe travel.
+const WHEEL_PER_TICK = 60;
+let wheelAccum = 0;
+document.addEventListener(
+  "wheel",
+  (e) => {
+    wheelAccum += e.deltaY;
+    while (Math.abs(wheelAccum) >= WHEEL_PER_TICK) {
+      const direction = wheelAccum > 0 ? "cw" : "ccw";
+      send({ type: "encoder", event: "rotate", direction, velocity: 1 });
+      wheelAccum -= wheelAccum > 0 ? WHEEL_PER_TICK : -WHEEL_PER_TICK;
+    }
+    e.preventDefault();
+  },
+  { passive: false }
+);
 
 document.addEventListener("keyup", (e) => {
   if (e.key === "Enter") {

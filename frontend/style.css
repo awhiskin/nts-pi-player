@@ -51,7 +51,7 @@ body {
   justify-content: space-between;
   padding: 0 18px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.78);
@@ -201,6 +201,19 @@ body {
   box-shadow: none;
 }
 
+/* Inline spinner used in the Now Playing eyebrow during loading; sized to
+   match the live-pip's visual weight. */
+.eyebrow-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(244, 241, 234, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
 @keyframes pip-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(255, 106, 31, 0.55);
@@ -264,7 +277,7 @@ body {
   justify-content: space-between;
   margin-top: 6px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.1em;
   color: rgba(244, 241, 234, 0.55);
   font-variant-numeric: tabular-nums;
@@ -465,7 +478,7 @@ body {
 .list-row {
   position: relative;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 18px;
   padding: 9px 0;
   font-family: var(--display);
@@ -488,6 +501,7 @@ body {
 .list-name {
   font-size: 26px;
   line-height: 1;
+  white-space: nowrap;
   transition: font-size 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
