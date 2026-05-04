@@ -75,12 +75,15 @@ body {
 }
 
 .chrome-mark {
-  font-family: var(--display);
-  font-weight: 900;
-  font-style: italic;
-  letter-spacing: -0.02em;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
   color: var(--paper);
+}
+
+.chrome-mark svg {
+  width: 32px;
+  height: 32px;
+  display: block;
 }
 
 .chrome-divider {
@@ -138,6 +141,17 @@ body {
   transition: opacity 600ms, background-image 0s;
 }
 
+/* Tiled NTS wordmark backdrop for the idle Now Playing state — gives the
+   "Nothing playing" screen some texture instead of a flat black void. */
+.page-bg-idle {
+  position: absolute;
+  inset: 0;
+  background-color: #181818;
+  background-image: url("/static/idle-pattern.svg");
+  background-repeat: repeat;
+  background-size: 180px 180px;
+}
+
 .page-bg-overlay {
   position: absolute;
   inset: 0;
@@ -164,7 +178,7 @@ body {
   align-items: center;
   gap: 12px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.85);
@@ -260,7 +274,7 @@ body {
 .np-mode {
   margin-top: 18px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.7);
@@ -296,7 +310,7 @@ body {
 /* ── Live page (2 channels stacked) ─────────────────── */
 .live-grid {
   position: absolute;
-  inset: 36px 0 0 0;
+  inset: 0;
   display: grid;
   grid-template-rows: 1fr 1fr;
   gap: 0;
@@ -351,7 +365,7 @@ body {
   align-items: center;
   gap: 10px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   color: var(--paper);
   margin-bottom: 8px;
@@ -429,7 +443,7 @@ body {
 
 .list-sub {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.55);
@@ -465,7 +479,7 @@ body {
 .list-num {
   font-family: var(--mono);
   font-weight: 500;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.1em;
   color: rgba(244, 241, 234, 0.4);
   min-width: 28px;
@@ -541,7 +555,7 @@ body {
 
 .loading-label {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.55);

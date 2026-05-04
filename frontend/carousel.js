@@ -352,7 +352,7 @@ function updateChrome() {
     topIndex = stack[0].pageIndex;
     label = deckLabel(entry.deck);
   }
-  chromeLabelEl.textContent = label;
+  if (chromeLabelEl) chromeLabelEl.textContent = label;
   updateChromeDots(topIndex);
 }
 
@@ -410,6 +410,7 @@ function ensureNowPlayingScaffold(pageEl) {
   if (pageEl.dataset.npBuilt === "1") return;
   pageEl.dataset.npBuilt = "1";
   pageEl.innerHTML = `
+    <div class="page-bg-idle" hidden></div>
     <div class="page-bg-image" hidden></div>
     <div class="page-bg-overlay"></div>
     <div class="np-content">
@@ -437,10 +438,13 @@ function renderNowPlayingPage(pageEl) {
   ensureNowPlayingScaffold(pageEl);
   const np = nowPlaying;
 
-  // Background image (hidden when idle/error or no artwork).
+  // Background image (hidden when idle/error or no artwork). Idle state
+  // gets a tiled NTS wordmark instead so the screen isn't a flat void.
   const bg = pageEl.querySelector(".page-bg-image");
+  const idleBg = pageEl.querySelector(".page-bg-idle");
   const showImg = np.state !== "idle" && np.state !== "error" && !!np.artwork;
   bg.hidden = !showImg;
+  idleBg.hidden = np.state !== "idle";
   if (showImg) {
     const url = `url("${np.artwork}")`;
     if (bg.style.backgroundImage !== url) bg.style.backgroundImage = url;
