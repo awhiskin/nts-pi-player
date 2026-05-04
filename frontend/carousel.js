@@ -924,6 +924,12 @@ function prefetchArtwork(cards) {
       const img = new Image();
       img.src = c.artwork;
     }
+    // Pre-warm the next live episode's artwork (live cards only) so the
+    // bg-image swap at the hour rollover is a cache hit.
+    if (c.next_artwork && c.next_artwork !== c.artwork) {
+      const img = new Image();
+      img.src = c.next_artwork;
+    }
   }
 }
 

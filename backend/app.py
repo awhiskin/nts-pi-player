@@ -281,6 +281,16 @@ def _next_episode_boundary(now_utc: datetime) -> Optional[datetime]:
     return min(upcoming) if upcoming else None
 
 
+def _next_episode_for(card_id: str, now_utc: datetime) -> Optional[dict]:
+    """Soonest upcoming episode for a single channel — used to surface the
+    next show's artwork URL so the frontend can pre-warm the browser cache
+    before the rollover."""
+    for ep in _schedule.get(card_id, ()):
+        if ep["start"] > now_utc:
+            return ep
+    return None
+
+
 def _episode_time_range(ep: dict) -> str:
     return (
         f"{ep['start'].astimezone().strftime('%H:%M')}"
@@ -700,10 +710,12 @@ def _build_live_cards() -> list[dict]:
     for card_id in sorted(_schedule.keys()):
         chan = card_id.split("-", 1)[1] if "-" in card_id else "?"
         ep = _current_episode(card_id, now_utc)
+        nxt = _next_episode_for(card_id, now_utc)
         title = (ep["title"] if ep else "") or f"Channel {chan}"
         time_range = _episode_time_range(ep) if ep else ""
         location = (ep["location"] if ep else "") or ""
         artwork = ep["artwork"] if ep else None
+        next_artwork = nxt["artwork"] if nxt else None
         cards.append({
             "id": card_id,
             "label": f"Channel {chan}",
@@ -711,6 +723,10 @@ def _build_live_cards() -> list[dict]:
             "time_range": time_range,
             "location": location,
             "artwork": artwork,
+            # Pre-warm hint: the artwork URL of the soonest upcoming
+            # episode. Frontend Image()-preloads it so the bg-image swap
+            # at the rollover boundary hits the browser cache.
+            "next_artwork": next_artwork,
             "kind": "play",
         })
     cards.append(_back_to_top_card())
