@@ -132,7 +132,7 @@ Use `/api/v2/search/episodes` with the `genres[]` or `moods[]` query parameter:
 ```
 GET /api/v2/search/episodes?genres[]=ambientnewage&offset=0&limit=20
 GET /api/v2/search/episodes?genres[]=ambientnewage-ambient&offset=0&limit=20
-GET /api/v2/search/episodes?moods[]=moods-the-healing-place&offset=0&limit=20
+GET /api/v2/search/episodes?moods[]=the-healing-place&offset=0&limit=20
 ```
 
 Both top-level genre IDs (e.g. `jazz`) and subgenre IDs (e.g. `jazz-ambientjazz`) work as filter values. Top-level filters return episodes tagged with any of that genre's subgenres.
@@ -249,7 +249,7 @@ A "deck" is an ordered list of cards. Decks are nested.
 **Root deck:**
 
 ```
-[Now Playing] [Live] [Mixtapes] [Genres] [Moods] [Back to Top]
+[Now Playing] [Live] [Mixtapes] [Moods] [Genres] [Back to Top]
 ```
 
 **Live deck:**
@@ -420,8 +420,12 @@ Single WebSocket between browser and backend. JSON messages.
 { "type": "encoder", "event": "click" }
 { "type": "encoder", "event": "long_press" }
 
-{ "type": "now_playing", "title": "...", "subtitle": "...", "artwork": "...",
+{ "type": "now_playing", "state": "playing",
+  "title": "...", "subtitle": "...", "artwork": "...",
   "elapsed": 124, "duration": 3600, "paused": false, "volume": 60 }
+{ "type": "now_playing", "state": "loading", "title": "...", "subtitle": "..." }
+{ "type": "now_playing", "state": "idle" }
+{ "type": "now_playing", "state": "error", "message": "Not available" }
 
 { "type": "deck_data", "deck_id": "genres",
   "cards": [ { "id": "back", "label": "Back" }, { "id": "ambientnewage", "label": "Ambient / New Age", "artwork": "..." }, ... ] }
@@ -533,12 +537,17 @@ Build in slices. Each slice should produce something demonstrably working before
 ### Slice 6 — Now Playing screen + auto-advance
 
 - Real Now Playing card with artwork, title, elapsed/duration.
+- **Playback state machine surfaced to the UI.** Backend tracks one of `idle`, `loading`, `playing`, `error` and pushes the current state on every `now_playing` message. The Now Playing card renders distinct visuals per state:
+  - `idle` — "Nothing playing" placeholder.
+  - `loading` — visible progress indicator (spinner, shimmer, or animated overlay) plus the title of the item being prepared. This must appear the moment a play request is accepted, before yt-dlp returns or mpv connects, so the user gets immediate visual confirmation that their click was received. yt-dlp resolution for past episodes can take 3–8 seconds, and live/mixtape stream connections take ~1 second; both warrant the loading state.
+  - `playing` — full Now Playing display with title, subtitle, artwork, elapsed/duration.
+  - `error` — short message ("Not available", "Stream failed") that auto-clears after a few seconds or on next interaction.
 - Volume mode + scroll mode toggle.
 - mpv property subscriptions for `time-pos` and `eof-reached`.
 - Implement queue context tracking.
-- Auto-advance on episode end.
+- Auto-advance on episode end. Skip past episodes whose `audio_sources` are empty.
 
-**Done when:** an episode finishes and the next one in the same list starts automatically.
+**Done when:** an episode finishes and the next one in the same list starts automatically, AND clicking play on any item shows the loading state immediately and transitions to playing once audio actually starts.
 
 ### Slice 7 — Velocity acceleration + polish
 
@@ -559,7 +568,7 @@ Build in slices. Each slice should produce something demonstrably working before
 
 - Live and mixtape stream URLs are hardcoded constants — they're not in the API.
 - Genre and mood taxonomies are stable. Fetch once on first run, cache to disk, refresh weekly.
-- The taxonomy IDs are flat strings (e.g. `ambientnewage-ambient`), no `genres-` prefix despite some older docs.
+- The taxonomy IDs are flat strings (e.g. `ambientnewage-ambient`), no `genres-` prefix despite some older docs. Mood IDs are also bare (e.g. `the-healing-place`), no `moods-` prefix.
 - `genres[]` filter values accept both top-level (`jazz`) and subgenre (`jazz-ambientjazz`) IDs.
 - yt-dlp resolved URLs expire in ~2 hours. Resolve on play, not in advance.
 - Auto-advance must skip episodes with empty `audio_sources`.

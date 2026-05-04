@@ -1,7 +1,9 @@
 const LONG_PRESS_MS = 500;
+const PAGE_PREFETCH_THRESHOLD = 5;
 
 const cardEl = document.getElementById("card");
 const decks = {};
+const deckMeta = {};
 const stack = [{ deck: "root", cursor: 0, cursorPlaced: false }];
 
 function currentEntry() {
@@ -64,7 +66,20 @@ function rotate(direction) {
   const delta = direction === "cw" ? 1 : -1;
   entry.cursor = Math.max(0, Math.min(cards.length - 1, entry.cursor + delta));
   entry.cursorPlaced = true;
+  maybePrefetchPage(entry);
   render();
+}
+
+function maybePrefetchPage(entry) {
+  const meta = deckMeta[entry.deck];
+  if (!meta || !meta.hasMore || meta.pending) return;
+  const cards = decks[entry.deck];
+  if (!cards) return;
+  const trailingIdx = cards.length - 1; // Back to Top
+  if (entry.cursor >= trailingIdx - PAGE_PREFETCH_THRESHOLD) {
+    meta.pending = true;
+    send({ type: "request_deck", deck_id: entry.deck, offset: meta.nextOffset });
+  }
 }
 
 function click() {
@@ -84,6 +99,9 @@ function click() {
       send({ type: "play", card_id: card.id });
       goToRoot();
       break;
+    case "unplayable":
+      // No audio source — slice 6 will surface a "Not available" toast.
+      break;
     case "now-playing":
       // slice 6 will toggle play/pause
       break;
@@ -92,7 +110,7 @@ function click() {
 
 function enterDeck(deckId) {
   stack.push({ deck: deckId, cursor: 0, cursorPlaced: false });
-  send({ type: "request_deck", deck_id: deckId });
+  send({ type: "request_deck", deck_id: deckId, offset: 0 });
   render();
 }
 
@@ -128,6 +146,41 @@ function prefetchArtwork(cards) {
   }
 }
 
+function countContent(cards) {
+  let n = 0;
+  for (const c of cards) {
+    if (c.kind !== "back" && c.kind !== "back-to-top") n++;
+  }
+  return n;
+}
+
+function handleDeckData(msg) {
+  const deckId = msg.deck_id;
+  const offset = msg.offset || 0;
+  const cards = msg.cards || [];
+
+  if (offset === 0) {
+    decks[deckId] = cards;
+    deckMeta[deckId] = {
+      hasMore: !!msg.has_more,
+      nextOffset: countContent(cards),
+      pending: false,
+    };
+  } else {
+    const existing = decks[deckId];
+    const meta = deckMeta[deckId];
+    // Stale page — current state isn't expecting this offset, ignore.
+    if (!existing || !meta || meta.nextOffset !== offset) return;
+    const trailingIdx = existing.length - 1; // Back to Top
+    existing.splice(trailingIdx, 0, ...cards);
+    meta.hasMore = !!msg.has_more;
+    meta.nextOffset += cards.length;
+    meta.pending = false;
+  }
+  prefetchArtwork(cards);
+  if (currentEntry().deck === deckId) render();
+}
+
 function longPress() {
   const card = currentCard();
   if (card && card.kind === "now-playing") return;
@@ -157,7 +210,7 @@ function send(msg) {
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.addEventListener("open", () => {
-    send({ type: "request_deck", deck_id: "root" });
+    send({ type: "request_deck", deck_id: "root", offset: 0 });
   });
   ws.addEventListener("message", (e) => {
     let msg;
@@ -166,13 +219,8 @@ function connect() {
     } catch {
       return;
     }
-    if (msg.type === "encoder") {
-      handleEncoder(msg);
-    } else if (msg.type === "deck_data") {
-      decks[msg.deck_id] = msg.cards;
-      prefetchArtwork(msg.cards);
-      if (currentEntry().deck === msg.deck_id) render();
-    }
+    if (msg.type === "encoder") handleEncoder(msg);
+    else if (msg.type === "deck_data") handleDeckData(msg);
   });
   ws.addEventListener("close", () => setTimeout(connect, 500));
 }
@@ -201,9 +249,7 @@ document.addEventListener("keyup", (e) => {
       clearTimeout(pressTimer);
       pressTimer = null;
     }
-    if (!longPressed) {
-      send({ type: "encoder", event: "click" });
-    }
+    if (!longPressed) send({ type: "encoder", event: "click" });
     longPressed = false;
   }
 });
