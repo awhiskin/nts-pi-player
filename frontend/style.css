@@ -107,6 +107,23 @@ body {
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
 }
 
+.card-mode {
+  position: relative;
+  margin-top: 1rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+  color: #ddd;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.card[data-kind="now-playing"][data-mode="scroll"] .card-mode {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .card[data-kind="now-playing"] {
   background-color: #111;
   justify-content: center;

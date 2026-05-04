@@ -6,6 +6,7 @@ from typing import Optional
 STATE_DIR = Path.home() / ".nts-pi-player"
 GENRES_PATH = STATE_DIR / "genres.json"
 MOODS_PATH = STATE_DIR / "moods.json"
+USER_STATE_PATH = STATE_DIR / "state.json"
 
 TAXONOMY_TTL = 7 * 24 * 3600  # 1 week
 
@@ -41,3 +42,30 @@ def load_moods() -> Optional[dict]:
 
 def save_moods(data: dict) -> None:
     _save(MOODS_PATH, data)
+
+
+def _load_user_state() -> dict:
+    if not USER_STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(USER_STATE_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_user_state(data: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    USER_STATE_PATH.write_text(json.dumps(data))
+
+
+def load_volume() -> Optional[int]:
+    v = _load_user_state().get("volume")
+    if isinstance(v, int) and 0 <= v <= 100:
+        return v
+    return None
+
+
+def save_volume(value: int) -> None:
+    state = _load_user_state()
+    state["volume"] = max(0, min(100, int(value)))
+    _save_user_state(state)

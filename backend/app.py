@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend import nts, resolver
+from backend import nts, resolver, state
 from backend.encoder import EncoderEvent, WebSocketEncoder, make_encoder
 from backend.player import Player
 
@@ -131,6 +131,9 @@ def _reset_now_playing() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    saved = state.load_volume()
+    if saved is not None:
+        now_playing["volume"] = saved
     await encoder.start(on_encoder_event)
     await player.start(on_mpv_event)
     await player.set_volume(now_playing["volume"])
@@ -189,6 +192,23 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
     if msg_type == "stop":
         await player.stop()
         _reset_now_playing()
+        await push_now_playing()
+        return
+    if msg_type == "pause":
+        await player.pause()
+        return
+    if msg_type == "resume":
+        await player.resume()
+        return
+    if msg_type == "set_volume":
+        try:
+            value = int(msg.get("value"))
+        except (TypeError, ValueError):
+            return
+        value = max(0, min(100, value))
+        now_playing["volume"] = value
+        await player.set_volume(value)
+        await asyncio.to_thread(state.save_volume, value)
         await push_now_playing()
         return
 

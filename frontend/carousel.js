@@ -1,12 +1,14 @@
 const LONG_PRESS_MS = 500;
 const PAGE_PREFETCH_THRESHOLD = 5;
+const VOLUME_STEP = 5;
 
 const cardEl = document.getElementById("card");
 const decks = {};
 const deckMeta = {};
 const stack = [{ deck: "root", cursor: 0, cursorPlaced: false }];
 
-let nowPlaying = { state: "idle", title: "", subtitle: "", artwork: null };
+let nowPlaying = { state: "idle", title: "", subtitle: "", artwork: null, volume: 60, paused: false };
+let nowPlayingMode = "volume"; // "volume" | "scroll" — only meaningful while on Now Playing
 
 function currentEntry() {
   return stack[stack.length - 1];
@@ -69,6 +71,7 @@ function renderNowPlaying() {
   const np = nowPlaying;
   cardEl.dataset.kind = "now-playing";
   cardEl.dataset.state = np.state;
+  cardEl.dataset.mode = nowPlayingMode;
   cardEl.style.backgroundImage = np.artwork ? `url("${np.artwork}")` : "";
   cardEl.innerHTML = "";
 
@@ -102,6 +105,18 @@ function renderNowPlaying() {
     time.textContent = formatTime(np.elapsed, np.duration);
     cardEl.appendChild(time);
   }
+
+  if (np.state === "playing" || np.state === "loading") {
+    const mode = document.createElement("div");
+    mode.className = "card-mode";
+    if (nowPlayingMode === "volume") {
+      const vol = `vol ${np.volume ?? 60}`;
+      mode.textContent = np.paused ? `paused · ${vol}` : vol;
+    } else {
+      mode.textContent = "scroll mode — rotate to navigate";
+    }
+    cardEl.appendChild(mode);
+  }
 }
 
 function formatTime(elapsed, duration) {
@@ -119,10 +134,26 @@ function rotate(direction) {
   const cards = currentCards();
   if (!cards || !cards.length) return;
   const entry = currentEntry();
+  const card = cards[entry.cursor];
+
+  if (card?.kind === "now-playing" && nowPlayingMode === "volume") {
+    adjustVolume(direction === "cw" ? VOLUME_STEP : -VOLUME_STEP);
+    return;
+  }
+
   const delta = direction === "cw" ? 1 : -1;
   entry.cursor = Math.max(0, Math.min(cards.length - 1, entry.cursor + delta));
   entry.cursorPlaced = true;
   maybePrefetchPage(entry);
+  render();
+}
+
+function adjustVolume(delta) {
+  const cur = nowPlaying.volume ?? 60;
+  const next = Math.max(0, Math.min(100, cur + delta));
+  if (next === cur) return;
+  nowPlaying.volume = next; // optimistic; backend will echo back
+  send({ type: "set_volume", value: next });
   render();
 }
 
@@ -159,7 +190,13 @@ function click() {
       // No audio source — slice 6 will surface a "Not available" toast.
       break;
     case "now-playing":
-      // slice 6 will toggle play/pause
+      if (nowPlayingMode === "volume") {
+        if (nowPlaying.state === "playing") {
+          send({ type: nowPlaying.paused ? "resume" : "pause" });
+        }
+      }
+      // scroll mode click while still on NP cursor is a no-op; user must
+      // rotate first to move the cursor onto a real target.
       break;
   }
 }
@@ -181,6 +218,7 @@ function goToRoot() {
   stack.length = 1;
   stack[0].cursor = 0;
   stack[0].cursorPlaced = true;
+  nowPlayingMode = "volume"; // reset on snap-to-NP
   render();
 }
 
@@ -239,7 +277,11 @@ function handleDeckData(msg) {
 
 function longPress() {
   const card = currentCard();
-  if (card && card.kind === "now-playing") return;
+  if (card && card.kind === "now-playing") {
+    nowPlayingMode = nowPlayingMode === "volume" ? "scroll" : "volume";
+    render();
+    return;
+  }
   if (stack.length > 1) {
     goBack();
   } else {
