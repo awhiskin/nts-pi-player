@@ -6,6 +6,8 @@ const decks = {};
 const deckMeta = {};
 const stack = [{ deck: "root", cursor: 0, cursorPlaced: false }];
 
+let nowPlaying = { state: "idle", title: "", subtitle: "", artwork: null };
+
 function currentEntry() {
   return stack[stack.length - 1];
 }
@@ -33,13 +35,19 @@ function render() {
   const cards = decks[entry.deck];
 
   if (!cards) {
-    cardEl.dataset.kind = "loading";
+    cardEl.dataset.kind = "loading-deck";
+    delete cardEl.dataset.state;
     cardEl.style.backgroundImage = "";
     cardEl.innerHTML = '<h1 class="card-label">…</h1>';
     return;
   }
 
   const card = cards[entry.cursor];
+  if (card.kind === "now-playing") {
+    renderNowPlaying();
+    return;
+  }
+  delete cardEl.dataset.state;
   cardEl.dataset.kind = card.kind;
   cardEl.style.backgroundImage = card.artwork ? `url("${card.artwork}")` : "";
   cardEl.innerHTML = "";
@@ -49,14 +57,62 @@ function render() {
   label.textContent = card.label;
   cardEl.appendChild(label);
 
-  let subtitle = card.subtitle;
-  if (card.kind === "now-playing" && !subtitle) subtitle = "Nothing playing";
-  if (subtitle) {
+  if (card.subtitle) {
     const sub = document.createElement("div");
     sub.className = "card-sub";
-    sub.textContent = subtitle;
+    sub.textContent = card.subtitle;
     cardEl.appendChild(sub);
   }
+}
+
+function renderNowPlaying() {
+  const np = nowPlaying;
+  cardEl.dataset.kind = "now-playing";
+  cardEl.dataset.state = np.state;
+  cardEl.style.backgroundImage = np.artwork ? `url("${np.artwork}")` : "";
+  cardEl.innerHTML = "";
+
+  if (np.state === "loading") {
+    const spinner = document.createElement("div");
+    spinner.className = "spinner";
+    cardEl.appendChild(spinner);
+  }
+
+  const label = document.createElement("h1");
+  label.className = "card-label";
+  if (np.state === "idle") {
+    label.textContent = "Nothing playing";
+  } else if (np.state === "error") {
+    label.textContent = np.error_message || "Error";
+  } else {
+    label.textContent = np.title || "Loading…";
+  }
+  cardEl.appendChild(label);
+
+  if (np.state !== "idle" && np.state !== "error" && np.subtitle) {
+    const sub = document.createElement("div");
+    sub.className = "card-sub";
+    sub.textContent = np.subtitle;
+    cardEl.appendChild(sub);
+  }
+
+  if (np.state === "playing" && np.elapsed != null) {
+    const time = document.createElement("div");
+    time.className = "card-time";
+    time.textContent = formatTime(np.elapsed, np.duration);
+    cardEl.appendChild(time);
+  }
+}
+
+function formatTime(elapsed, duration) {
+  const fmt = (s) => {
+    if (s == null) return "—";
+    const m = Math.floor(s / 60);
+    const r = Math.floor(s % 60);
+    return `${m}:${r.toString().padStart(2, "0")}`;
+  };
+  if (duration && duration > 0) return `${fmt(elapsed)} / ${fmt(duration)}`;
+  return fmt(elapsed);
 }
 
 function rotate(direction) {
@@ -221,6 +277,10 @@ function connect() {
     }
     if (msg.type === "encoder") handleEncoder(msg);
     else if (msg.type === "deck_data") handleDeckData(msg);
+    else if (msg.type === "now_playing") {
+      nowPlaying = msg;
+      if (currentCard()?.kind === "now-playing") render();
+    }
   });
   ws.addEventListener("close", () => setTimeout(connect, 500));
 }

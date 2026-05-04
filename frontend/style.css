@@ -55,7 +55,7 @@ body {
 
 .card[data-kind="back"],
 .card[data-kind="back-to-top"],
-.card[data-kind="loading"] {
+.card[data-kind="loading-deck"] {
   background-image: none !important;
   background-color: #050505;
   border-style: dashed;
@@ -65,8 +65,46 @@ body {
 
 .card[data-kind="back"]::before,
 .card[data-kind="back-to-top"]::before,
-.card[data-kind="loading"]::before {
+.card[data-kind="loading-deck"]::before {
   display: none;
+}
+
+.card[data-kind="now-playing"][data-state="idle"],
+.card[data-kind="now-playing"][data-state="error"] {
+  background-image: none !important;
+  background-color: #111;
+}
+
+.card[data-kind="now-playing"][data-state="idle"]::before,
+.card[data-kind="now-playing"][data-state="error"]::before {
+  display: none;
+}
+
+.spinner {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 1.25rem;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.card-time {
+  position: relative;
+  margin-top: 0.6rem;
+  font-size: 1rem;
+  color: #ccc;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
 }
 
 .card[data-kind="now-playing"] {

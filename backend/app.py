@@ -18,6 +18,7 @@ LIVE_STREAMS = {
 }
 
 PAGE_SIZE = 30
+DEFAULT_VOLUME = 60
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -27,6 +28,20 @@ encoder = make_encoder()
 
 # article path -> soundcloud url, populated as episode decks are built
 _episode_audio: dict[str, str] = {}
+
+# card_id -> {"title", "subtitle", "artwork"} for now_playing display.
+_card_meta: dict[str, dict] = {}
+
+now_playing: dict = {
+    "state": "idle",
+    "title": "",
+    "subtitle": "",
+    "artwork": None,
+    "elapsed": None,
+    "duration": None,
+    "paused": False,
+    "volume": DEFAULT_VOLUME,
+}
 
 
 async def broadcast(message: dict) -> None:
@@ -41,15 +56,86 @@ async def broadcast(message: dict) -> None:
         connections.discard(ws)
 
 
+async def push_now_playing() -> None:
+    await broadcast({"type": "now_playing", **now_playing})
+
+
 async def on_encoder_event(event: EncoderEvent) -> None:
     await broadcast({"type": "encoder", **event})
+
+
+async def on_mpv_event(event: dict) -> None:
+    name = event.get("event")
+    if name == "property-change":
+        # Property-changes flow only matter while playing. While loading/idle/
+        # error, mpv may still emit clears (time-pos→None, etc.) that would
+        # spuriously overwrite a meaningful UI state.
+        if now_playing["state"] != "playing":
+            return
+        prop = event.get("name")
+        data = event.get("data")
+        if prop == "time-pos":
+            # Throttle: only push when elapsed second actually advances.
+            old = now_playing["elapsed"]
+            now_playing["elapsed"] = data
+            old_int = int(old) if old is not None else None
+            new_int = int(data) if data is not None else None
+            if new_int != old_int:
+                await push_now_playing()
+        elif prop == "duration":
+            old = now_playing["duration"]
+            now_playing["duration"] = data
+            old_int = int(old) if old is not None else None
+            new_int = int(data) if data is not None else None
+            if new_int != old_int:
+                await push_now_playing()
+        elif prop == "pause":
+            new_paused = bool(data)
+            if new_paused != now_playing["paused"]:
+                now_playing["paused"] = new_paused
+                await push_now_playing()
+        return
+    if name in ("file-loaded", "playback-restart"):
+        if now_playing["state"] != "playing":
+            now_playing["state"] = "playing"
+            now_playing.pop("error_message", None)
+            await push_now_playing()
+        return
+    if name == "end-file":
+        reason = event.get("reason")
+        if reason == "error":
+            now_playing["state"] = "error"
+            now_playing["error_message"] = "Stream failed"
+            await push_now_playing()
+        elif reason == "eof":
+            # Phase D will auto-advance here; for now just go idle.
+            _reset_now_playing()
+            await push_now_playing()
+        # Other reasons (stop, quit, redirect) are silent — they happen on
+        # loadfile-replacing-loadfile and shouldn't flap the UI to idle.
+        return
+
+
+def _reset_now_playing() -> None:
+    now_playing.update({
+        "state": "idle",
+        "title": "",
+        "subtitle": "",
+        "artwork": None,
+        "elapsed": None,
+        "duration": None,
+        "paused": False,
+    })
+    now_playing.pop("error_message", None)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await encoder.start(on_encoder_event)
+    await player.start(on_mpv_event)
+    await player.set_volume(now_playing["volume"])
     yield
-    player.stop()
+    await player.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -66,6 +152,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     connections.add(ws)
     try:
+        # Sync newly-connected clients to current state.
+        await ws.send_text(json.dumps({"type": "now_playing", **now_playing}))
         while True:
             raw = await ws.receive_text()
             try:
@@ -99,14 +187,36 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         asyncio.create_task(_handle_play(card_id))
         return
     if msg_type == "stop":
-        await asyncio.to_thread(player.stop)
+        await player.stop()
+        _reset_now_playing()
+        await push_now_playing()
         return
 
 
 async def _handle_play(card_id: Optional[str]) -> None:
+    meta = _card_meta.get(card_id or "", {})
+    now_playing["state"] = "loading"
+    now_playing["title"] = meta.get("title") or ""
+    now_playing["subtitle"] = meta.get("subtitle") or ""
+    now_playing["artwork"] = meta.get("artwork")
+    now_playing["elapsed"] = None
+    now_playing["duration"] = None
+    now_playing["paused"] = False
+    now_playing.pop("error_message", None)
+    await push_now_playing()
+
     url = await asyncio.to_thread(resolve_play_url, card_id)
-    if url:
-        await asyncio.to_thread(player.play, url)
+    if url is None:
+        now_playing["state"] = "error"
+        now_playing["error_message"] = "Not available"
+        await push_now_playing()
+        return
+    try:
+        await player.play(url)
+    except Exception as exc:
+        now_playing["state"] = "error"
+        now_playing["error_message"] = f"Playback error: {exc}"
+        await push_now_playing()
 
 
 def resolve_play_url(card_id: Optional[str]) -> Optional[str]:
@@ -172,6 +282,14 @@ def _episode_artwork(image: dict) -> Optional[str]:
     return image.get("medium_large") or image.get("large")
 
 
+def _remember_meta(card: dict) -> None:
+    _card_meta[card["id"]] = {
+        "title": card.get("label") or "",
+        "subtitle": card.get("subtitle") or "",
+        "artwork": card.get("artwork"),
+    }
+
+
 def _build_root_deck() -> dict:
     return {
         "deck_id": "root",
@@ -196,13 +314,15 @@ def _build_live_cards() -> list[dict]:
         chan = r.get("channel_name") or "?"
         now = r.get("now") or {}
         details = (now.get("embeds") or {}).get("details") or {}
-        cards.append({
+        card = {
             "id": f"channel-{chan}",
             "label": f"Channel {chan}",
             "subtitle": now.get("broadcast_title") or details.get("name") or "",
             "artwork": _artwork(details.get("media") or {}),
             "kind": "play",
-        })
+        }
+        _remember_meta(card)
+        cards.append(card)
     cards.append(_back_to_top_card())
     return cards
 
@@ -215,13 +335,15 @@ def _build_mixtape_cards() -> list[dict]:
         data = {"results": []}
     for m in data.get("results", []):
         alias = m.get("mixtape_alias") or ""
-        cards.append({
+        card = {
             "id": f"mixtape:{alias}",
             "label": m.get("title") or alias,
             "subtitle": m.get("subtitle") or "",
             "artwork": _artwork(m.get("media") or {}),
             "kind": "play",
-        })
+        }
+        _remember_meta(card)
+        cards.append(card)
     cards.append(_back_to_top_card())
     return cards
 
@@ -336,13 +458,15 @@ def _episode_card(r: dict) -> dict:
         url = sources[0].get("url")
         if path and url:
             _episode_audio[path] = url
-        return {
+        card = {
             "id": f"episode:{path}",
             "label": title,
             "subtitle": subtitle,
             "artwork": artwork,
             "kind": "play",
         }
+        _remember_meta(card)
+        return card
     return {
         "id": f"episode:{path}",
         "label": title,
