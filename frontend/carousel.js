@@ -106,17 +106,15 @@ function renderNowPlaying() {
     cardEl.appendChild(time);
   }
 
-  if (np.state === "playing" || np.state === "loading") {
-    const mode = document.createElement("div");
-    mode.className = "card-mode";
-    if (nowPlayingMode === "volume") {
-      const vol = `vol ${np.volume ?? 60}`;
-      mode.textContent = np.paused ? `paused · ${vol}` : vol;
-    } else {
-      mode.textContent = "scroll mode — rotate to navigate";
-    }
-    cardEl.appendChild(mode);
+  const mode = document.createElement("div");
+  mode.className = "card-mode";
+  if (nowPlayingMode === "volume") {
+    const vol = `vol ${np.volume ?? 60}`;
+    mode.textContent = np.paused ? `paused · ${vol}` : vol;
+  } else {
+    mode.textContent = "scroll mode — rotate to navigate";
   }
+  cardEl.appendChild(mode);
 }
 
 function formatTime(elapsed, duration) {
@@ -194,9 +192,9 @@ function click() {
         if (nowPlaying.state === "playing") {
           send({ type: nowPlaying.paused ? "resume" : "pause" });
         }
+      } else if (nowPlaying.state !== "idle") {
+        send({ type: "stop" });
       }
-      // scroll mode click while still on NP cursor is a no-op; user must
-      // rotate first to move the cursor onto a real target.
       break;
   }
 }
