@@ -177,10 +177,28 @@ function triggerCard(card) {
   if (card.kind === "enter-deck") {
     enterDeck(card.deck, card.label);
   } else if (card.kind === "play") {
-    send({ type: "play", card_id: card.id });
+    send({ type: "play", card_id: card.id, queue: queueForCurrentContext() });
     goToTopLevel();
   }
   // unplayable: no-op
+}
+
+// The list of playable card_ids (in order) in the user's current viewing
+// context — used by the backend for auto-advance on episode end. Live
+// channels and mixtapes are continuous, so their queues never advance,
+// but it's harmless to send them anyway.
+function queueForCurrentContext() {
+  const entry = currentEntry();
+  let cards;
+  if (entry.level === "top") {
+    const page = TOP_PAGES[entry.pageIndex];
+    if (!page.deck) return [];
+    cards = visibleCards(page.deck);
+  } else {
+    cards = visibleCards(entry.deck);
+  }
+  if (!cards) return [];
+  return cards.filter((c) => c.kind === "play").map((c) => c.id);
 }
 
 function longPress() {

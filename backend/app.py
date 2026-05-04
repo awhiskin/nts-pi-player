@@ -35,6 +35,13 @@ _card_meta: dict[str, dict] = {}
 # What's currently loaded in the player (drives live-aware pause/resume).
 _current_card_id: Optional[str] = None
 
+# Auto-advance queue: ordered list of playable card_ids in the deck the user
+# initiated playback from, plus the index of the currently-playing item.
+# The frontend supplies the list on each user-initiated play; the backend
+# walks forward through it on each `end-file` (eof) event.
+_queue: list[str] = []
+_queue_index: int = -1
+
 now_playing: dict = {
     "state": "idle",
     "title": "",
@@ -136,16 +143,28 @@ async def on_mpv_event(event: dict) -> None:
             now_playing["error_message"] = "Stream failed"
             await push_now_playing()
         elif reason == "eof":
-            # Phase D will auto-advance here; for now just go idle.
-            _reset_now_playing()
-            await push_now_playing()
+            # Auto-advance to the next item in the queue if there is one;
+            # otherwise reset to idle.
+            if not _advance_queue():
+                _reset_now_playing()
+                await push_now_playing()
         # Other reasons (stop, quit, redirect) are silent — they happen on
         # loadfile-replacing-loadfile and shouldn't flap the UI to idle.
         return
 
 
+def _advance_queue() -> bool:
+    """Spawn play of the next queued item if one exists. Returns True iff a
+    next item was queued (caller should NOT reset now_playing in that case)."""
+    if _queue_index < 0 or _queue_index >= len(_queue) - 1:
+        return False
+    next_id = _queue[_queue_index + 1]
+    asyncio.create_task(_handle_play(next_id))
+    return True
+
+
 def _reset_now_playing() -> None:
-    global _current_card_id
+    global _current_card_id, _queue, _queue_index
     now_playing.update({
         "state": "idle",
         "title": "",
@@ -159,6 +178,8 @@ def _reset_now_playing() -> None:
     })
     now_playing.pop("error_message", None)
     _current_card_id = None
+    _queue = []
+    _queue_index = -1
 
 
 @asynccontextmanager
@@ -219,7 +240,8 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         # Fire-and-forget: yt-dlp resolution can take seconds; don't block the
         # message loop or encoder events would queue up behind it.
         card_id = msg.get("card_id")
-        asyncio.create_task(_handle_play(card_id))
+        queue = msg.get("queue") if isinstance(msg.get("queue"), list) else None
+        asyncio.create_task(_handle_play(card_id, queue))
         return
     if msg_type == "stop":
         await player.stop()
@@ -256,9 +278,16 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         return
 
 
-async def _handle_play(card_id: Optional[str]) -> None:
-    global _current_card_id
+async def _handle_play(card_id: Optional[str], queue: Optional[list[str]] = None) -> None:
+    global _current_card_id, _queue, _queue_index
     _current_card_id = card_id
+    if queue is not None:
+        # User-initiated play: queue context refreshed.
+        _queue = list(queue)
+    if card_id and card_id in _queue:
+        _queue_index = _queue.index(card_id)
+    else:
+        _queue_index = -1
     meta = _card_meta.get(card_id or "", {})
     now_playing["state"] = "loading"
     now_playing["title"] = meta.get("title") or ""
