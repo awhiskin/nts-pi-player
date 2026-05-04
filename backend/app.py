@@ -48,6 +48,8 @@ now_playing: dict = {
     "state": "idle",
     "title": "",
     "subtitle": "",
+    "time_range": "",
+    "location": "",
     "artwork": None,
     "elapsed": None,
     "duration": None,
@@ -179,6 +181,8 @@ def _reset_now_playing() -> None:
         "state": "idle",
         "title": "",
         "subtitle": "",
+        "time_range": "",
+        "location": "",
         "artwork": None,
         "elapsed": None,
         "duration": None,
@@ -215,13 +219,14 @@ async def _live_metadata_loop() -> None:
                 ends = now.get("end_timestamp") or ""
                 location = _live_location(now, details)
                 new_title = broadcast or f"Channel {chan_num}"
-                new_subtitle = _format_live_subtitle(starts, ends, location)
+                new_time_range = _format_time_range(starts, ends)
                 new_artwork = _artwork(details.get("media") or {})
                 # Keep _card_meta fresh so a future user-initiated play
                 # of the same channel inherits the latest info.
                 meta = _card_meta.setdefault(card_id, {})
                 meta["title"] = new_title
-                meta["subtitle"] = new_subtitle
+                meta["time_range"] = new_time_range
+                meta["location"] = location
                 if new_artwork:
                     meta["artwork"] = new_artwork
                 # Push to the UI only if user-visible state actually changed.
@@ -229,8 +234,11 @@ async def _live_metadata_loop() -> None:
                 if new_title != now_playing.get("title"):
                     now_playing["title"] = new_title
                     changed = True
-                if new_subtitle != now_playing.get("subtitle"):
-                    now_playing["subtitle"] = new_subtitle
+                if new_time_range != now_playing.get("time_range"):
+                    now_playing["time_range"] = new_time_range
+                    changed = True
+                if location != now_playing.get("location"):
+                    now_playing["location"] = location
                     changed = True
                 if new_artwork and new_artwork != now_playing.get("artwork"):
                     now_playing["artwork"] = new_artwork
@@ -363,6 +371,8 @@ async def _handle_play(card_id: Optional[str], queue: Optional[list[str]] = None
     now_playing["state"] = "loading"
     now_playing["title"] = meta.get("title") or ""
     now_playing["subtitle"] = meta.get("subtitle") or ""
+    now_playing["time_range"] = meta.get("time_range") or ""
+    now_playing["location"] = meta.get("location") or ""
     now_playing["artwork"] = meta.get("artwork")
     now_playing["elapsed"] = None
     now_playing["duration"] = None
@@ -473,19 +483,6 @@ def _format_time_range(starts: str, ends: str) -> str:
     return f"{s_local.strftime('%H:%M')} → {e_local.strftime('%H:%M')}"
 
 
-def _format_live_subtitle(starts: str, ends: str, location: str = "") -> str:
-    """Now Playing subtitle for a live channel: '21:00–22:00 | LOCATION'.
-    The vertical divider only renders when both sides are present."""
-    parts = []
-    time_range = _format_time_range(starts, ends)
-    if time_range:
-        parts.append(time_range)
-    loc = (location or "").strip()
-    if loc:
-        parts.append(loc)
-    return " | ".join(parts)
-
-
 def _live_location(now: dict, details: dict) -> str:
     """Pull the location for a live broadcast, falling back through the
     plausible fields. NTS isn't fully consistent — short form is preferred."""
@@ -527,21 +524,27 @@ def _build_live_cards() -> list[dict]:
         ends = now.get("end_timestamp") or ""
         location = _live_location(now, details)
         artwork = _artwork(details.get("media") or {})
+        time_range = _format_time_range(starts, ends)
         # Live deck card (browse view): channel number is the headline,
-        # the show name is the smaller subtitle.
+        # show name is the subtitle, and time_range / location ride in the
+        # eyebrow alongside the channel label.
         card = {
             "id": f"channel-{chan}",
             "label": f"Channel {chan}",
             "subtitle": broadcast,
+            "time_range": time_range,
+            "location": location,
             "artwork": artwork,
             "kind": "play",
         }
         # Now Playing display (when this channel is the current playback):
-        # show name is the headline; subtitle is the air-time + location
-        # (channel number is dropped — not informative).
+        # show name is the headline; the eyebrow row carries time_range +
+        # location. The conventional `subtitle` slot is left empty so the
+        # frontend can use it for the "w/ Host" tail split off the title.
         _card_meta[card["id"]] = {
             "title": broadcast or f"Channel {chan}",
-            "subtitle": _format_live_subtitle(starts, ends, location),
+            "time_range": time_range,
+            "location": location,
             "artwork": artwork,
         }
         cards.append(card)

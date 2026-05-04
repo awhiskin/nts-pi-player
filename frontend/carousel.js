@@ -284,9 +284,52 @@ function adjustVolume(delta) {
 }
 
 function decodeEntities(encodedString) {
-  const textArea = document.createElement('textarea');
+  const textArea = document.createElement("textarea");
   textArea.innerHTML = encodedString;
   return textArea.value;
+}
+
+// NTS show titles often look like "Soup To Nuts w/ John Gómez". The "w/ Host"
+// tail gets split off and rendered as the secondary line under the title;
+// when the title doesn't split, `fallbackSub` is shown instead (description
+// for mixtapes, date/location for episodes, …).
+function setTitleAndSub(showEl, subEl, rawTitle, fallbackSub) {
+  const split = splitTitleOnWith(decodeEntities(rawTitle || ""));
+  const main = split.main.toUpperCase();
+  const sub =
+    split.with.toUpperCase() ||
+    decodeEntities(fallbackSub || "").toUpperCase();
+  if (showEl.textContent !== main) showEl.textContent = main;
+  subEl.hidden = !sub;
+  if (sub && subEl.textContent !== sub) subEl.textContent = sub;
+}
+
+function splitTitleOnWith(raw) {
+  if (!raw) return { main: "", with: "" };
+  const m = raw.match(/^(.+?)\s+(w\/.*)$/i);
+  if (!m) return { main: raw, with: "" };
+  return { main: m[1].trim(), with: m[2].trim() };
+}
+
+// Show / hide the time-range and location segments in the eyebrow row,
+// each paired with its preceding 1px divider. Used by Now Playing (live
+// channels) and the Live page cards.
+function setEyebrowMeta(eyebrowEl, timeRange, location) {
+  const tEl = eyebrowEl.querySelector(".np-eyebrow-time");
+  const tPipe = eyebrowEl.querySelector(".time-pipe");
+  const lEl = eyebrowEl.querySelector(".np-eyebrow-loc");
+  const lPipe = eyebrowEl.querySelector(".loc-pipe");
+
+  const t = (timeRange || "").toUpperCase();
+  const l = (location || "").toUpperCase();
+
+  tEl.hidden = !t;
+  tPipe.hidden = !t;
+  if (t && tEl.textContent !== t) tEl.textContent = t;
+
+  lEl.hidden = !l;
+  lPipe.hidden = !l;
+  if (l && lEl.textContent !== l) lEl.textContent = l;
 }
 
 function updateNowPlayingMode() {
@@ -434,9 +477,12 @@ function ensureNowPlayingScaffold(pageEl) {
         <span class="live-pip"></span>
         <span class="eyebrow-spinner" hidden></span>
         <span class="np-status"></span>
+        <span class="np-eyebrow-pipe time-pipe" hidden></span>
+        <span class="np-eyebrow-time" hidden></span>
+        <span class="np-eyebrow-pipe loc-pipe" hidden></span>
+        <span class="np-eyebrow-loc" hidden></span>
       </div>
       <h1 class="np-show"></h1>
-      <div class="np-with" hidden></div>
       <div class="np-sub" hidden></div>
       <div class="np-progress" hidden>
         <div class="np-progress-bar"><div class="np-progress-fill"></div></div>
@@ -469,12 +515,12 @@ function renderNowPlayingPage(pageEl) {
     bg.style.backgroundImage = "";
   }
 
-  // Eyebrow: the live pip is exclusive to live channels (1/2). It pulses
-  // when actively playing, sits dim while paused/error, and is hidden for
-  // mixtapes / episodes / idle. While loading, the pip is replaced by a
-  // small inline spinner so the marker keeps its position next to the
-  // status word. The eyebrow row hides when there's nothing meaningful to
-  // say (e.g. a past episode is playing — title carries the info).
+  // Eyebrow: pip + status text on the left; for live channels the row
+  // continues with time-range + location segments, each preceded by a thin
+  // pipe divider. The pip pulses when actively playing live, sits dim
+  // while paused/error, and is hidden for mixtapes / episodes / idle.
+  // While loading, the pip is replaced by a small inline spinner so the
+  // marker keeps its position next to the status word.
   const eyebrow = pageEl.querySelector(".np-eyebrow");
   const eyebrowStr = eyebrowText(np);
   pageEl.querySelector(".np-status").textContent = eyebrowStr;
@@ -485,36 +531,27 @@ function renderNowPlayingPage(pageEl) {
   pip.hidden = isLoading || !isLive;
   pip.classList.toggle("idle", !pulsing);
   pageEl.querySelector(".eyebrow-spinner").hidden = !isLoading;
-  eyebrow.hidden = !eyebrowStr;
+  setEyebrowMeta(
+    eyebrow,
+    isLive ? np.time_range : "",
+    isLive ? np.location : "",
+  );
+  const hasMeta = isLive && (np.time_range || np.location);
+  eyebrow.hidden = !eyebrowStr && !hasMeta;
 
-  // Title — split on " w/ " so the "w/ Host Name" portion can render below
-  // the main title at a smaller, italic, dimmed weight.
+  // Title + secondary line. The secondary line is the "w/ Host" tail when
+  // the title splits, otherwise it falls back to np.subtitle (mixtape
+  // description, episode date/location, …). Live channels carry no
+  // subtitle now — their time/location is in the eyebrow above.
   const show = pageEl.querySelector(".np-show");
-  const withEl = pageEl.querySelector(".np-with");
-  let mainTitle, withPart;
-  if (np.state === "idle") {
-    mainTitle = "NOTHING PLAYING";
-    withPart = "";
-  } else if (np.state === "error") {
-    mainTitle = (np.error_message || "ERROR").toUpperCase();
-    withPart = "";
-  } else {
-    const split = splitTitleOnWith(np.title || "Loading…");
-    mainTitle = decodeEntities(split.main.toUpperCase());
-    withPart = decodeEntities(split.with.toUpperCase());
-  }
-  if (show.textContent !== mainTitle) show.textContent = mainTitle;
-  withEl.hidden = !withPart;
-  if (withPart && withEl.textContent !== withPart) withEl.textContent = withPart;
-
-  // Subtitle.
   const sub = pageEl.querySelector(".np-sub");
-  const subText =
-    np.state !== "idle" && np.state !== "error" && np.subtitle
-      ? np.subtitle.toUpperCase()
-      : "";
-  sub.hidden = !subText;
-  if (subText && sub.textContent !== subText) sub.textContent = subText;
+  if (np.state === "idle") {
+    setTitleAndSub(show, sub, "Nothing playing", "");
+  } else if (np.state === "error") {
+    setTitleAndSub(show, sub, np.error_message || "Error", "");
+  } else {
+    setTitleAndSub(show, sub, np.title || "Loading…", np.subtitle);
+  }
 
   // Progress block — non-live content with a known duration only.
   const showProgress =
@@ -536,16 +573,6 @@ function renderNowPlayingPage(pageEl) {
   updateNowPlayingMode();
 }
 
-// NTS show titles often look like "Soup To Nuts w/ John Gómez" — split off
-// the "w/ Host" tail so the main title can dominate and the host gets
-// rendered below in a smaller, italic, dimmed style.
-function splitTitleOnWith(raw) {
-  if (!raw) return { main: "", with: "" };
-  const m = raw.match(/^(.+?)\s+(w\/.*)$/i);
-  if (!m) return { main: raw, with: "" };
-  return { main: m[1].trim(), with: m[2].trim() };
-}
-
 function eyebrowText(np) {
   if (np.state === "idle") return "STANDBY";
   if (np.state === "loading") return "LOADING";
@@ -565,6 +592,46 @@ function ensureLiveScaffold(pageEl) {
   if (pageEl.dataset.liveBuilt === "1") return;
   pageEl.dataset.liveBuilt = "1";
   pageEl.innerHTML = `<div class="live-grid"></div>`;
+}
+
+// Live cards mirror the Now Playing scaffold (eyebrow + show + sub),
+// scaled down and bottom-left aligned via CSS — same vocabulary, same
+// classes.
+function buildLiveCard(card, index) {
+  const cardEl = document.createElement("div");
+  cardEl.className = "live-card";
+  cardEl.dataset.i = String(index);
+  cardEl.innerHTML = `
+    <div class="bg-image"></div>
+    <div class="bg-overlay"></div>
+    <div class="live-card-inner">
+      <div class="np-eyebrow">
+        <span class="live-pip"></span>
+        <span class="np-status"></span>
+        <span class="np-eyebrow-pipe time-pipe" hidden></span>
+        <span class="np-eyebrow-time" hidden></span>
+        <span class="np-eyebrow-pipe loc-pipe" hidden></span>
+        <span class="np-eyebrow-loc" hidden></span>
+      </div>
+      <div class="np-show"></div>
+      <div class="np-sub" hidden></div>
+    </div>
+  `;
+
+  const bg = cardEl.querySelector(".bg-image");
+  if (card.artwork) bg.style.backgroundImage = `url("${card.artwork}")`;
+
+  cardEl.querySelector(".np-status").textContent = (card.label || "").toUpperCase();
+  setEyebrowMeta(cardEl.querySelector(".np-eyebrow"), card.time_range, card.location);
+
+  setTitleAndSub(
+    cardEl.querySelector(".np-show"),
+    cardEl.querySelector(".np-sub"),
+    card.subtitle || "Loading…",
+    "",
+  );
+
+  return cardEl;
 }
 
 function renderLivePage(pageEl, isActive) {
@@ -589,55 +656,7 @@ function renderLivePage(pageEl, isActive) {
   if (grid.dataset.liveSig !== sig) {
     grid.dataset.liveSig = sig;
     grid.innerHTML = "";
-    cards.forEach((card, i) => {
-      const cardEl = document.createElement("div");
-      cardEl.className = "live-card";
-      cardEl.dataset.i = String(i);
-
-      const bg = document.createElement("div");
-      bg.className = "bg-image";
-      if (card.artwork) bg.style.backgroundImage = `url("${card.artwork}")`;
-      cardEl.appendChild(bg);
-
-      const overlay = document.createElement("div");
-      overlay.className = "bg-overlay";
-      cardEl.appendChild(overlay);
-
-      const inner = document.createElement("div");
-      inner.className = "live-card-inner";
-
-      const ch = document.createElement("div");
-      ch.className = "live-ch";
-      const pip = document.createElement("span");
-      pip.className = "live-pip";
-      ch.appendChild(pip);
-      const chLabel = document.createElement("span");
-      chLabel.textContent = (card.label || "").toUpperCase();
-      ch.appendChild(chLabel);
-      inner.appendChild(ch);
-
-      if (card.subtitle) {
-        const show = document.createElement("div");
-        show.className = "np-show";
-
-        const showWith = document.createElement("div");
-        showWith.className = "np-with";
-
-        const split = splitTitleOnWith(decodeEntities(card.subtitle.toUpperCase()) || "Loading…");
-
-        let mainTitle = decodeEntities(split.main.toUpperCase());
-        let withPart = decodeEntities(split.with.toUpperCase());
-
-        show.textContent = mainTitle;
-        showWith.textContent = withPart;
-
-        inner.appendChild(show);
-        inner.appendChild(showWith);
-      }
-
-      cardEl.appendChild(inner);
-      grid.appendChild(cardEl);
-    });
+    cards.forEach((card, i) => grid.appendChild(buildLiveCard(card, i)));
   }
 
   // Update focus highlighting in place.

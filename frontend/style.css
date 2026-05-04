@@ -243,19 +243,20 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* "w/ Host" tail of NTS show titles, split off and rendered below the main
-   title at a smaller, italic, dimmed weight (matches the design reference). */
-.np-with {
-  font-family: var(--display);
-  font-weight: 700;
-  font-style: italic;
-  font-size: clamp(28px, 6vmin, 32px);
-  line-height: 0.9;
-  letter-spacing: -0.025em;
-  text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.5);
-  margin-top: 10px;
-  text-wrap: balance;
+/* Eyebrow time / location segments and their preceding pipe dividers. The
+   pipe matches the chrome bar's vertical rule, slightly shorter to suit the
+   smaller eyebrow type. Each pair is hidden when its value is empty so the
+   eyebrow collapses cleanly. */
+.np-eyebrow-pipe {
+  width: 1px;
+  height: 10px;
+  background: rgba(244, 241, 234, 0.3);
+  flex-shrink: 0;
+}
+
+.np-eyebrow-time,
+.np-eyebrow-loc {
+  font-variant-numeric: tabular-nums;
 }
 
 .np-sub {
@@ -382,47 +383,33 @@ body {
 .live-card-inner {
   position: absolute;
   inset: 0;
-  padding: 28px 56px;
+  padding: 36px 56px 32px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
-.live-ch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  color: var(--paper);
-  margin-bottom: 8px;
-  text-transform: uppercase;
+/* Live cards reuse the Now Playing vocabulary (.np-eyebrow / .np-show /
+   .np-sub) but each card is half-screen, so the type scales down and
+   margins tighten. */
+.live-card .np-eyebrow {
+  margin-bottom: 10px;
+}
+
+.live-card .np-show {
+  font-size: clamp(36px, 7vmin, 56px);
+  letter-spacing: -0.035em;
+  animation: none;
+}
+
+.live-card .np-sub {
+  margin-top: 6px;
 }
 
 .live-card:not(.on) .live-pip {
   animation: none;
   background: rgba(244, 241, 234, 0.4);
   box-shadow: none;
-}
-
-.live-show {
-  font-family: var(--display);
-  font-weight: 900;
-  font-size: clamp(36px, 7vmin, 64px);
-  line-height: 0.9;
-  letter-spacing: -0.035em;
-  text-transform: uppercase;
-}
-
-.live-sub {
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: 14px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.7);
-  margin-top: 6px;
 }
 
 /* ── List page (Moods, Mixtapes, Genres, sub-decks) ── */
