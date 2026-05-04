@@ -228,7 +228,7 @@ body {
 .np-show {
   font-family: var(--display);
   font-weight: 900;
-  font-size: clamp(64px, 13vmin, 132px);
+  font-size: clamp(64px, 13vmin, 90px);
   line-height: 0.86;
   letter-spacing: -0.045em;
   text-transform: uppercase;
@@ -245,8 +245,8 @@ body {
 
 .np-sub {
   font-family: var(--display);
-  font-weight: 800;
-  font-size: clamp(14px, 2.4vmin, 22px);
+  font-weight: 600;
+  font-size: clamp(14px, 2.4vmin, 18px);
   letter-spacing: -0.01em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.55);

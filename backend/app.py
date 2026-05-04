@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,7 @@ LIVE_STREAMS = {
 
 PAGE_SIZE = 30
 DEFAULT_VOLUME = 60
+LIVE_METADATA_INTERVAL = 15.0  # seconds between schedule polls while a live channel is playing
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -191,6 +193,58 @@ def _reset_now_playing() -> None:
     _queue_index = -1
 
 
+async def _live_metadata_loop() -> None:
+    """While a live channel is playing, refresh the show name + artwork
+    each interval so the UI reflects NTS's schedule changes (a new show
+    starts on the hour) without the user touching anything."""
+    while True:
+        try:
+            await asyncio.sleep(LIVE_METADATA_INTERVAL)
+            card_id = _current_card_id
+            if card_id not in LIVE_STREAMS:
+                continue
+            chan_num = card_id[len("channel-"):]
+            data = await asyncio.to_thread(nts.live)
+            for r in data.get("results", []):
+                if r.get("channel_name") != chan_num:
+                    continue
+                now = r.get("now") or {}
+                details = (now.get("embeds") or {}).get("details") or {}
+                broadcast = now.get("broadcast_title") or details.get("name") or ""
+                starts = now.get("start_timestamp") or ""
+                ends = now.get("end_timestamp") or ""
+                location = _live_location(now, details)
+                new_title = broadcast or f"Channel {chan_num}"
+                new_subtitle = _format_live_subtitle(starts, ends, location)
+                new_artwork = _artwork(details.get("media") or {})
+                # Keep _card_meta fresh so a future user-initiated play
+                # of the same channel inherits the latest info.
+                meta = _card_meta.setdefault(card_id, {})
+                meta["title"] = new_title
+                meta["subtitle"] = new_subtitle
+                if new_artwork:
+                    meta["artwork"] = new_artwork
+                # Push to the UI only if user-visible state actually changed.
+                changed = False
+                if new_title != now_playing.get("title"):
+                    now_playing["title"] = new_title
+                    changed = True
+                if new_subtitle != now_playing.get("subtitle"):
+                    now_playing["subtitle"] = new_subtitle
+                    changed = True
+                if new_artwork and new_artwork != now_playing.get("artwork"):
+                    now_playing["artwork"] = new_artwork
+                    changed = True
+                if changed:
+                    await push_now_playing()
+                break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Network blip / parse error — skip this cycle, try again next.
+            pass
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     saved = state.load_volume()
@@ -199,8 +253,16 @@ async def lifespan(_app: FastAPI):
     await encoder.start(on_encoder_event)
     await player.start(on_mpv_event)
     await player.set_volume(now_playing["volume"])
-    yield
-    await player.shutdown()
+    metadata_task = asyncio.create_task(_live_metadata_loop())
+    try:
+        yield
+    finally:
+        metadata_task.cancel()
+        try:
+            await metadata_task
+        except asyncio.CancelledError:
+            pass
+        await player.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -396,6 +458,46 @@ def _remember_meta(card: dict) -> None:
     }
 
 
+def _format_time_range(starts: str, ends: str) -> str:
+    """Convert NTS' ISO timestamps into a local 'HH:MM–HH:MM' string,
+    or empty if either side is missing / unparseable."""
+    try:
+        s = datetime.fromisoformat(starts.replace("Z", "+00:00")) if starts else None
+        e = datetime.fromisoformat(ends.replace("Z", "+00:00")) if ends else None
+    except ValueError:
+        return ""
+    if not s or not e:
+        return ""
+    s_local = s.astimezone()
+    e_local = e.astimezone()
+    return f"{s_local.strftime('%H:%M')} – {e_local.strftime('%H:%M')}"
+
+
+def _format_live_subtitle(starts: str, ends: str, location: str = "") -> str:
+    """Now Playing subtitle for a live channel: '21:00–22:00 | LOCATION'.
+    The vertical divider only renders when both sides are present."""
+    parts = []
+    time_range = _format_time_range(starts, ends)
+    if time_range:
+        parts.append(time_range)
+    loc = (location or "").strip()
+    if loc:
+        parts.append(loc)
+    return " | ".join(parts)
+
+
+def _live_location(now: dict, details: dict) -> str:
+    """Pull the location for a live broadcast, falling back through the
+    plausible fields. NTS isn't fully consistent — short form is preferred."""
+    return (
+        details.get("location_long")
+        or now.get("location_long")
+        or details.get("location_short")
+        or now.get("location_short")
+        or ""
+    )
+
+
 def _build_root_deck() -> dict:
     return {
         "deck_id": "root",
@@ -420,14 +522,28 @@ def _build_live_cards() -> list[dict]:
         chan = r.get("channel_name") or "?"
         now = r.get("now") or {}
         details = (now.get("embeds") or {}).get("details") or {}
+        broadcast = now.get("broadcast_title") or details.get("name") or ""
+        starts = now.get("start_timestamp") or ""
+        ends = now.get("end_timestamp") or ""
+        location = _live_location(now, details)
+        artwork = _artwork(details.get("media") or {})
+        # Live deck card (browse view): channel number is the headline,
+        # the show name is the smaller subtitle.
         card = {
             "id": f"channel-{chan}",
             "label": f"Channel {chan}",
-            "subtitle": now.get("broadcast_title") or details.get("name") or "",
-            "artwork": _artwork(details.get("media") or {}),
+            "subtitle": broadcast,
+            "artwork": artwork,
             "kind": "play",
         }
-        _remember_meta(card)
+        # Now Playing display (when this channel is the current playback):
+        # show name is the headline; subtitle is the air-time + location
+        # (channel number is dropped — not informative).
+        _card_meta[card["id"]] = {
+            "title": broadcast or f"Channel {chan}",
+            "subtitle": _format_live_subtitle(starts, ends, location),
+            "artwork": artwork,
+        }
         cards.append(card)
     cards.append(_back_to_top_card())
     return cards
