@@ -217,6 +217,10 @@ function longPress() {
     const page = TOP_PAGES[entry.pageIndex];
     if (page.kind === "now-playing") {
       nowPlayingMode = nowPlayingMode === "volume" ? "scroll" : "volume";
+      // Entering scroll mode is a strong signal of fresh user attention —
+      // ask the backend to re-fetch the live schedule so subsequent pages
+      // reflect any upstream changes.
+      if (nowPlayingMode === "scroll") send({ type: "refresh_live" });
       renderTopActivePage();
       return;
     }
@@ -300,8 +304,12 @@ function setTitleAndSub(showEl, subEl, rawTitle, fallbackSub) {
     split.with.toUpperCase() ||
     decodeEntities(fallbackSub || "").toUpperCase();
   if (showEl.textContent !== main) showEl.textContent = main;
-  subEl.hidden = !sub;
-  if (sub && subEl.textContent !== sub) subEl.textContent = sub;
+  // Reserve the secondary line's space even when empty, so the bottom-
+  // anchored content block doesn't shift between states (e.g. standby
+  // → playing).
+  const text = sub || " ";
+  if (subEl.textContent !== text) subEl.textContent = text;
+  subEl.hidden = false;
 }
 
 function splitTitleOnWith(raw) {
@@ -339,8 +347,7 @@ function updateNowPlayingMode() {
   if (!modeEl) return;
   modeEl.classList.toggle("scroll", nowPlayingMode === "scroll");
   if (nowPlayingMode === "volume") {
-    const vol = `VOL ${nowPlaying.volume ?? 60}`;
-    modeEl.textContent = nowPlaying.paused ? `PAUSED · ${vol}` : vol;
+    modeEl.textContent = `VOL ${nowPlaying.volume ?? 60}`;
   } else {
     modeEl.textContent =
       nowPlaying.state === "idle"
@@ -596,8 +603,10 @@ function ensureLiveScaffold(pageEl) {
 
 // Live cards mirror the Now Playing scaffold (eyebrow + show + sub),
 // scaled down and bottom-left aligned via CSS — same vocabulary, same
-// classes.
-function buildLiveCard(card, index) {
+// classes. Build the empty shell once per channel, then update content
+// idempotently on every render so backend deck broadcasts (episode
+// rollovers) repaint in place.
+function buildLiveCardScaffold(index) {
   const cardEl = document.createElement("div");
   cardEl.className = "live-card";
   cardEl.dataset.i = String(index);
@@ -617,21 +626,25 @@ function buildLiveCard(card, index) {
       <div class="np-sub" hidden></div>
     </div>
   `;
+  return cardEl;
+}
 
+function updateLiveCard(cardEl, card) {
   const bg = cardEl.querySelector(".bg-image");
-  if (card.artwork) bg.style.backgroundImage = `url("${card.artwork}")`;
+  const desired = card.artwork ? `url("${card.artwork}")` : "";
+  if (bg.style.backgroundImage !== desired) bg.style.backgroundImage = desired;
 
-  cardEl.querySelector(".np-status").textContent = (card.label || "").toUpperCase();
+  const status = cardEl.querySelector(".np-status");
+  const label = (card.label || "").toUpperCase();
+  if (status.textContent !== label) status.textContent = label;
+
   setEyebrowMeta(cardEl.querySelector(".np-eyebrow"), card.time_range, card.location);
-
   setTitleAndSub(
     cardEl.querySelector(".np-show"),
     cardEl.querySelector(".np-sub"),
     card.subtitle || "Loading…",
     "",
   );
-
-  return cardEl;
 }
 
 function renderLivePage(pageEl, isActive) {
@@ -651,13 +664,15 @@ function renderLivePage(pageEl, isActive) {
     return;
   }
 
-  // Rebuild grid only when channel set changes.
+  // Build scaffolds only when the channel set changes; thereafter just
+  // update content. Keeps DOM stable across episode-rollover broadcasts.
   const sig = cards.map((c) => c.id).join("|");
   if (grid.dataset.liveSig !== sig) {
     grid.dataset.liveSig = sig;
     grid.innerHTML = "";
-    cards.forEach((card, i) => grid.appendChild(buildLiveCard(card, i)));
+    cards.forEach((_, i) => grid.appendChild(buildLiveCardScaffold(i)));
   }
+  cards.forEach((card, i) => updateLiveCard(grid.children[i], card));
 
   // Update focus highlighting in place.
   const entry = currentEntry();

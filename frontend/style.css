@@ -234,7 +234,8 @@ body {
   text-transform: uppercase;
   color: var(--paper);
   text-wrap: balance;
-  margin: 0;
+  margin: 0 0 0 -0.04em; /* offset the font's left side-bearing so the
+                            title visually flushes the content padding */
   animation: np-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 

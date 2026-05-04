@@ -1,7 +1,8 @@
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +21,9 @@ LIVE_STREAMS = {
 
 PAGE_SIZE = 30
 DEFAULT_VOLUME = 60
-LIVE_METADATA_INTERVAL = 15.0  # seconds between schedule polls while a live channel is playing
+SCHEDULE_REFRESH_INTERVAL = 15 * 60.0  # idle re-fetch cadence (s)
+SCHEDULE_RETRY_INTERVAL = 60.0          # re-fetch sooner after a failure
+EPISODE_BOUNDARY_SLACK = 0.5            # wake just past start_timestamp so the new ep is current
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -43,6 +46,16 @@ _current_card_id: Optional[str] = None
 # walks forward through it on each `end-file` (eof) event.
 _queue: list[str] = []
 _queue_index: int = -1
+
+# In-memory live-channel schedule, derived from the NTS live API's now/next*
+# blocks. Keys are card ids ("channel-1", "channel-2"); values are episodes
+# sorted by start time. The schedule loop walks this against the server clock
+# to flip episodes precisely at start_timestamp, independent of how quickly
+# NTS updates their `now` field upstream.
+_schedule: dict[str, list[dict]] = {}
+_schedule_attempted_at: float = 0.0  # monotonic ts of last refresh attempt
+_schedule_succeeded_at: float = 0.0  # monotonic ts of last successful refresh
+_schedule_kick = asyncio.Event()      # set by triggers (play/pause, scroll mode)
 
 now_playing: dict = {
     "state": "idle",
@@ -197,60 +210,211 @@ def _reset_now_playing() -> None:
     _queue_index = -1
 
 
-async def _live_metadata_loop() -> None:
-    """While a live channel is playing, refresh the show name + artwork
-    each interval so the UI reflects NTS's schedule changes (a new show
-    starts on the hour) without the user touching anything."""
+def _parse_episode(entry: dict) -> Optional[dict]:
+    """Flatten one of the live API's `now`/`next*` blocks into a single
+    record. Returns None if the timestamps are missing/unparseable."""
+    if not isinstance(entry, dict):
+        return None
+    starts = entry.get("start_timestamp") or ""
+    ends = entry.get("end_timestamp") or ""
+    try:
+        start = datetime.fromisoformat(starts.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(ends.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    details = (entry.get("embeds") or {}).get("details") or {}
+    return {
+        "start": start,
+        "end": end,
+        "title": entry.get("broadcast_title") or details.get("name") or "",
+        "artwork": _artwork(details.get("media") or {}),
+        "location": _live_location(entry, details),
+    }
+
+
+async def _refresh_schedule() -> bool:
+    """Fetch the live API and rebuild _schedule from now+next* per channel.
+    Returns True on success."""
+    global _schedule_attempted_at, _schedule_succeeded_at
+    _schedule_attempted_at = time.monotonic()
+    try:
+        data = await asyncio.to_thread(nts.live)
+    except Exception:
+        return False
+    new_schedule: dict[str, list[dict]] = {}
+    for r in data.get("results", []):
+        chan = r.get("channel_name")
+        if not chan:
+            continue
+        episodes: list[dict] = []
+        for key, entry in r.items():
+            # `now` plus `next`, `next2`, `next3`, …
+            if key == "now" or (isinstance(key, str) and key.startswith("next")):
+                ep = _parse_episode(entry)
+                if ep:
+                    episodes.append(ep)
+        episodes.sort(key=lambda e: e["start"])
+        new_schedule[f"channel-{chan}"] = episodes
+    if new_schedule:
+        _schedule.clear()
+        _schedule.update(new_schedule)
+        _schedule_succeeded_at = time.monotonic()
+        return True
+    return False
+
+
+def _current_episode(card_id: str, now_utc: datetime) -> Optional[dict]:
+    for ep in _schedule.get(card_id, ()):  # already sorted by start
+        if ep["start"] <= now_utc < ep["end"]:
+            return ep
+    return None
+
+
+def _next_episode_boundary(now_utc: datetime) -> Optional[datetime]:
+    """Soonest upcoming episode start across all channels."""
+    upcoming = []
+    for eps in _schedule.values():
+        for ep in eps:
+            if ep["start"] > now_utc:
+                upcoming.append(ep["start"])
+                break
+    return min(upcoming) if upcoming else None
+
+
+def _episode_time_range(ep: dict) -> str:
+    return (
+        f"{ep['start'].astimezone().strftime('%H:%M')}"
+        f" → "
+        f"{ep['end'].astimezone().strftime('%H:%M')}"
+    )
+
+
+def _apply_episodes() -> bool:
+    """Sync _card_meta for every live channel against the current episode.
+    Returns True if any meta or now_playing fields changed."""
+    now_utc = datetime.now(timezone.utc)
+    deck_changed = False
+    for card_id in list(_schedule.keys()):
+        ep = _current_episode(card_id, now_utc)
+        if ep is None:
+            continue
+        chan_num = card_id.split("-", 1)[1] if "-" in card_id else ""
+        new_title = ep["title"] or f"Channel {chan_num}"
+        new_time_range = _episode_time_range(ep)
+        new_location = ep["location"] or ""
+        new_artwork = ep["artwork"]
+        meta = _card_meta.setdefault(card_id, {})
+        if (
+            meta.get("title") != new_title
+            or meta.get("time_range") != new_time_range
+            or meta.get("location") != new_location
+            or (new_artwork and meta.get("artwork") != new_artwork)
+        ):
+            meta["title"] = new_title
+            meta["time_range"] = new_time_range
+            meta["location"] = new_location
+            if new_artwork:
+                meta["artwork"] = new_artwork
+            deck_changed = True
+    return deck_changed
+
+
+async def _sync_now_playing_from_meta() -> None:
+    """If a live channel is the current playback, mirror its updated meta
+    into now_playing so the Now Playing screen flips at the boundary."""
+    cur_id = now_playing.get("card_id")
+    if now_playing.get("card_kind") != "live" or not cur_id:
+        return
+    meta = _card_meta.get(cur_id) or {}
+    changed = False
+    for key in ("title", "time_range", "location"):
+        val = meta.get(key, "")
+        if val != now_playing.get(key):
+            now_playing[key] = val
+            changed = True
+    art = meta.get("artwork")
+    if art and art != now_playing.get("artwork"):
+        now_playing["artwork"] = art
+        changed = True
+    if changed:
+        await push_now_playing()
+
+
+async def _refresh_and_apply() -> None:
+    """Idempotent: refresh schedule (if missing or stale enough), reapply
+    current-episode state, broadcast the live deck on change."""
+    if not _schedule:
+        await _refresh_schedule()
+    if _apply_episodes():
+        await broadcast_live_deck()
+        await _sync_now_playing_from_meta()
+
+
+async def broadcast_live_deck() -> None:
+    cards = await asyncio.to_thread(_build_live_cards)
+    await broadcast({
+        "type": "deck_data",
+        "deck_id": "live",
+        "offset": 0,
+        "cards": cards,
+    })
+
+
+def kick_schedule_refresh() -> None:
+    """Wake the schedule loop now (e.g. after pause/resume or on scroll-mode
+    entry). Safe to call from sync contexts."""
+    _schedule_kick.set()
+
+
+async def _live_schedule_loop() -> None:
+    """Drive live-channel updates from the server clock, against an
+    in-memory schedule periodically refreshed from the NTS API. Episodes
+    flip exactly at start_timestamp — independent of NTS's own update
+    lag."""
     while True:
         try:
-            await asyncio.sleep(LIVE_METADATA_INTERVAL)
-            card_id = _current_card_id
-            if card_id not in LIVE_STREAMS:
-                continue
-            chan_num = card_id[len("channel-"):]
-            data = await asyncio.to_thread(nts.live)
-            for r in data.get("results", []):
-                if r.get("channel_name") != chan_num:
-                    continue
-                now = r.get("now") or {}
-                details = (now.get("embeds") or {}).get("details") or {}
-                broadcast = now.get("broadcast_title") or details.get("name") or ""
-                starts = now.get("start_timestamp") or ""
-                ends = now.get("end_timestamp") or ""
-                location = _live_location(now, details)
-                new_title = broadcast or f"Channel {chan_num}"
-                new_time_range = _format_time_range(starts, ends)
-                new_artwork = _artwork(details.get("media") or {})
-                # Keep _card_meta fresh so a future user-initiated play
-                # of the same channel inherits the latest info.
-                meta = _card_meta.setdefault(card_id, {})
-                meta["title"] = new_title
-                meta["time_range"] = new_time_range
-                meta["location"] = location
-                if new_artwork:
-                    meta["artwork"] = new_artwork
-                # Push to the UI only if user-visible state actually changed.
-                changed = False
-                if new_title != now_playing.get("title"):
-                    now_playing["title"] = new_title
-                    changed = True
-                if new_time_range != now_playing.get("time_range"):
-                    now_playing["time_range"] = new_time_range
-                    changed = True
-                if location != now_playing.get("location"):
-                    now_playing["location"] = location
-                    changed = True
-                if new_artwork and new_artwork != now_playing.get("artwork"):
-                    now_playing["artwork"] = new_artwork
-                    changed = True
-                if changed:
-                    await push_now_playing()
-                break
+            now_mono = time.monotonic()
+            stale = (now_mono - _schedule_succeeded_at) > SCHEDULE_REFRESH_INTERVAL
+            retry_due = (now_mono - _schedule_attempted_at) > SCHEDULE_RETRY_INTERVAL
+            if stale and (_schedule_succeeded_at == 0 or retry_due):
+                await _refresh_schedule()
+
+            if _apply_episodes():
+                await broadcast_live_deck()
+                await _sync_now_playing_from_meta()
+
+            # Sleep until the next event: episode boundary OR refresh
+            # deadline OR an explicit kick.
+            now_utc = datetime.now(timezone.utc)
+            wait_secs = SCHEDULE_REFRESH_INTERVAL  # upper bound
+            nb = _next_episode_boundary(now_utc)
+            if nb is not None:
+                wait_secs = min(
+                    wait_secs,
+                    (nb - now_utc).total_seconds() + EPISODE_BOUNDARY_SLACK,
+                )
+            if _schedule_succeeded_at:
+                next_refresh_in = SCHEDULE_REFRESH_INTERVAL - (
+                    time.monotonic() - _schedule_succeeded_at
+                )
+                wait_secs = min(wait_secs, next_refresh_in)
+            wait_secs = max(1.0, wait_secs)
+
+            try:
+                await asyncio.wait_for(_schedule_kick.wait(), timeout=wait_secs)
+                # Triggered: refresh forcefully on next iteration.
+                _schedule_kick.clear()
+                if await _refresh_schedule():
+                    if _apply_episodes():
+                        await broadcast_live_deck()
+                        await _sync_now_playing_from_meta()
+            except asyncio.TimeoutError:
+                # Normal wakeup — boundary or refresh deadline.
+                pass
         except asyncio.CancelledError:
             raise
         except Exception:
-            # Network blip / parse error — skip this cycle, try again next.
-            pass
+            await asyncio.sleep(SCHEDULE_RETRY_INTERVAL)
 
 
 @asynccontextmanager
@@ -261,13 +425,17 @@ async def lifespan(_app: FastAPI):
     await encoder.start(on_encoder_event)
     await player.start(on_mpv_event)
     await player.set_volume(now_playing["volume"])
-    metadata_task = asyncio.create_task(_live_metadata_loop())
+    # Populate the schedule before any websocket can connect, so the first
+    # `request_deck` for `live` returns real data rather than an empty list.
+    await _refresh_schedule()
+    _apply_episodes()
+    schedule_task = asyncio.create_task(_live_schedule_loop())
     try:
         yield
     finally:
-        metadata_task.cancel()
+        schedule_task.cancel()
         try:
-            await metadata_task
+            await schedule_task
         except asyncio.CancelledError:
             pass
         await player.shutdown()
@@ -289,6 +457,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     try:
         # Sync newly-connected clients to current state.
         await ws.send_text(json.dumps({"type": "now_playing", **now_playing}))
+        if _schedule:
+            await ws.send_text(json.dumps({
+                "type": "deck_data",
+                "deck_id": "live",
+                "offset": 0,
+                "cards": _build_live_cards(),
+            }))
         while True:
             raw = await ws.receive_text()
             try:
@@ -321,6 +496,7 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         card_id = msg.get("card_id")
         queue = msg.get("queue") if isinstance(msg.get("queue"), list) else None
         asyncio.create_task(_handle_play(card_id, queue))
+        kick_schedule_refresh()
         return
     if msg_type == "stop":
         await player.stop()
@@ -337,12 +513,19 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
             await push_now_playing()
         else:
             await player.pause()
+        kick_schedule_refresh()
         return
     if msg_type == "resume":
         if _is_live_card(_current_card_id) and now_playing.get("paused"):
             asyncio.create_task(_handle_play(_current_card_id))
         else:
             await player.resume()
+        kick_schedule_refresh()
+        return
+    if msg_type == "refresh_live":
+        # Frontend-side trigger (scroll-mode entry, etc.). The schedule
+        # loop will re-fetch and broadcast on its next iteration.
+        kick_schedule_refresh()
         return
     if msg_type == "set_volume":
         try:
@@ -510,44 +693,26 @@ def _build_root_deck() -> dict:
 
 
 def _build_live_cards() -> list[dict]:
+    """Render the Live deck from the in-memory schedule. The schedule loop
+    owns refreshing _schedule; this is a pure read."""
     cards: list[dict] = [_back_card()]
-    try:
-        data = nts.live()
-    except Exception:
-        data = {"results": []}
-    for r in data.get("results", []):
-        chan = r.get("channel_name") or "?"
-        now = r.get("now") or {}
-        details = (now.get("embeds") or {}).get("details") or {}
-        broadcast = now.get("broadcast_title") or details.get("name") or ""
-        starts = now.get("start_timestamp") or ""
-        ends = now.get("end_timestamp") or ""
-        location = _live_location(now, details)
-        artwork = _artwork(details.get("media") or {})
-        time_range = _format_time_range(starts, ends)
-        # Live deck card (browse view): channel number is the headline,
-        # show name is the subtitle, and time_range / location ride in the
-        # eyebrow alongside the channel label.
-        card = {
-            "id": f"channel-{chan}",
+    now_utc = datetime.now(timezone.utc)
+    for card_id in sorted(_schedule.keys()):
+        chan = card_id.split("-", 1)[1] if "-" in card_id else "?"
+        ep = _current_episode(card_id, now_utc)
+        title = (ep["title"] if ep else "") or f"Channel {chan}"
+        time_range = _episode_time_range(ep) if ep else ""
+        location = (ep["location"] if ep else "") or ""
+        artwork = ep["artwork"] if ep else None
+        cards.append({
+            "id": card_id,
             "label": f"Channel {chan}",
-            "subtitle": broadcast,
+            "subtitle": title if ep else "",
             "time_range": time_range,
             "location": location,
             "artwork": artwork,
             "kind": "play",
-        }
-        # Now Playing display (when this channel is the current playback):
-        # show name is the headline; the eyebrow row carries time_range +
-        # location. The conventional `subtitle` slot is left empty so the
-        # frontend can use it for the "w/ Host" tail split off the title.
-        _card_meta[card["id"]] = {
-            "title": broadcast or f"Channel {chan}",
-            "time_range": time_range,
-            "location": location,
-            "artwork": artwork,
-        }
-        cards.append(card)
+        })
     cards.append(_back_to_top_card())
     return cards
 
