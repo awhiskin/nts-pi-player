@@ -261,11 +261,53 @@ function enterDeck(deckId, label) {
 }
 
 function goToTopLevel() {
+  const wasOnNp = stack.length === 1 && stack[0].pageIndex === 0;
   stack.length = 1;
   stack[0].pageIndex = 0;
   nowPlayingMode = "volume";
   resetTopCursors(0);
+  // When jumping home from another top page, snap the carousel directly
+  // to NP rather than sliding through the intermediate pages. The slide
+  // covers multiple page heights in 180ms while flashing through whatever
+  // sits between, which competes with the 320ms screen-grow transition
+  // and reads as laggy. Snapping leaves the screen un-insetting as the
+  // single dominant motion.
+  if (!wasOnNp) snapCarouselToActive();
   render();
+}
+
+// Fade-out → snap → fade-in. Total duration (80 + 240) lines up with the
+// 320ms #screen un-inset transition so both motions resolve together.
+// The fade-out hides the cross-page swap so the user doesn't see a hard
+// cut between artworks.
+const FADE_OUT_MS = 80;
+const FADE_IN_MS = 240;
+
+function snapCarouselToActive() {
+  const carousel = screenEl.querySelector(".carousel");
+  if (!carousel) return;
+  const targetTransform = `translateY(-${stack[0].pageIndex * 100}%)`;
+  const ease = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+
+  carousel.style.transition = `opacity ${FADE_OUT_MS}ms ${ease}`;
+  carousel.style.opacity = "0";
+
+  setTimeout(() => {
+    // Snap transform while the carousel is invisible.
+    carousel.style.transition = "none";
+    carousel.style.transform = targetTransform;
+    void carousel.offsetHeight;
+
+    carousel.style.transition = `opacity ${FADE_IN_MS}ms ${ease}`;
+    carousel.style.opacity = "1";
+
+    setTimeout(() => {
+      // Restore the CSS-default transition (transform 180ms) so future
+      // user-driven page swaps slide normally.
+      carousel.style.transition = "";
+      carousel.style.opacity = "";
+    }, FADE_IN_MS);
+  }, FADE_OUT_MS);
 }
 
 // Cursor reset rule: pages "ahead" of the focused page snap to first item;
