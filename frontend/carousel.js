@@ -100,11 +100,10 @@ function moveTopCursor(direction) {
   const page = TOP_PAGES[entry.pageIndex];
   const delta = direction === "next" ? 1 : -1;
 
-  // Now-playing: in volume mode, encoder = volume. Direction is inverted
-  // vs navigation — pushing "up" (ccw / ↑ / ←) raises volume, matching
-  // typical volume sliders.
+  // Now-playing: in volume mode, encoder = volume. CW = louder, matching
+  // a physical volume knob.
   if (page.kind === "now-playing" && nowPlayingMode === "volume") {
-    adjustVolume(-delta * VOLUME_STEP);
+    adjustVolume(delta * VOLUME_STEP);
     return;
   }
 
