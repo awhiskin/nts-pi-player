@@ -280,8 +280,8 @@ function goToTopLevel() {
 // 320ms #screen un-inset transition so both motions resolve together.
 // The fade-out hides the cross-page swap so the user doesn't see a hard
 // cut between artworks.
-const FADE_OUT_MS = 80;
-const FADE_IN_MS = 240;
+const FADE_OUT_MS = 80 * 2;
+const FADE_IN_MS = 240 * 2;
 
 function snapCarouselToActive() {
   const carousel = screenEl.querySelector(".carousel");
