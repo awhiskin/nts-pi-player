@@ -25,7 +25,6 @@ const screenEl = document.getElementById("screen");
 const chromeLabelEl = document.getElementById("chrome-label");
 const chromeTimeEl = document.getElementById("chrome-time");
 const sideDotsEl = document.getElementById("side-dots");
-const hintEl = document.getElementById("hint");
 const volumePeekEl = document.getElementById("volume-peek");
 const volumePeekFillEl = volumePeekEl?.querySelector(".volume-peek-fill");
 const volumePeekLabelEl = volumePeekEl?.querySelector(".volume-peek-label");
@@ -334,7 +333,6 @@ function adjustVolume(delta) {
   peekVolumeHint();
 }
 
-// Volume changes happen in PASSIVE mode where the hint is faded out.
 // Briefly fade in a thin progress bar showing the current volume value,
 // then fade out after a short delay. Re-arms on each rotation so the
 // peek stays up for as long as the user keeps twisting.
@@ -413,28 +411,6 @@ function setEyebrowMeta(eyebrowEl, timeRange, location) {
   lEl.hidden = !l;
   lPipe.hidden = !l;
   if (l && lEl.textContent !== l) lEl.textContent = l;
-}
-
-// The bottom hint is the single home for navigation cues + mode info. It
-// fades out entirely in PASSIVE mode (Now Playing in volume mode); in
-// INTERACTIVE mode it adapts: NP scroll mode shows the mode-specific
-// instruction (orange accent), every other interactive surface shows the
-// keyboard cheat sheet.
-function updateHint() {
-  if (!hintEl) return;
-  if (!isInteractive()) return;  // CSS handles the fade-out; leave content
-  const entry = currentEntry();
-  const onNp = entry.level === "top"
-    && TOP_PAGES[entry.pageIndex].kind === "now-playing";
-  if (onNp) {
-    hintEl.classList.add("scroll");
-    hintEl.textContent = nowPlaying.state === "idle"
-      ? "SCROLL MODE — ROTATE TO NAVIGATE"
-      : "SCROLL MODE — CLICK TO STOP, ROTATE TO NAVIGATE";
-  } else {
-    hintEl.classList.remove("scroll");
-    hintEl.textContent = "↑↓ ←→  ROTATE · ENTER CLICK · HOLD ENTER LONG-PRESS";
-  }
 }
 
 // ── Prefetch ───────────────────────────────────────────────────
@@ -535,10 +511,9 @@ function updateInteractiveState() {
   stageEl.classList.toggle("interactive", interactive);
   if (interactive) armIdleTimer();
   else clearIdleTimer();
-  // Any in-flight volume peek is bound to the previous state — discard it
-  // on transition so updateHint owns the hint cleanly.
+  // Any in-flight volume peek is bound to the previous state — discard
+  // on transition so the peek doesn't bleed across mode changes.
   clearVolumePeek();
-  updateHint();
 }
 
 function updateTopTransform() {
@@ -1079,8 +1054,6 @@ function connect() {
         // NP card off-screen but still in DOM — keep it fresh too.
         renderNowPlayingPage(screenEl.querySelector('.page[data-page-id="now-playing"]'));
       }
-      // Hint copy depends on np.state (idle vs playing), so refresh.
-      updateHint();
     }
   });
   ws.addEventListener("close", () => setTimeout(connect, 500));

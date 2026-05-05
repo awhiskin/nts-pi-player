@@ -136,7 +136,7 @@ body {
 /* PASSIVE (Now Playing in volume mode): #screen is full-bleed.
    INTERACTIVE (everything else): #screen insets by a small gutter on
    all sides, leaving room for the vertical dots column on the right.
-   The chrome bar and bottom hint stay full-width across both states. */
+   The chrome bar stays full-width across both states. */
 #screen {
   transition: inset 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -649,42 +649,10 @@ body {
   color: rgba(244, 241, 234, 0.55);
 }
 
-/* ── Hint footer ─────────────────────────────────────── */
-/* Single home for navigation cues and the scroll-mode indicator. Hidden
-   in PASSIVE state (Now Playing in volume mode) so the resting screen
-   stays clean; fades back in whenever the UI is INTERACTIVE. The .scroll
-   variant tints orange — applied when on Now Playing in scroll mode to
-   echo the previous .np-mode.scroll treatment. */
-#hint {
-  position: absolute;
-  bottom: 12px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.4);
-  z-index: 10;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-#stage.interactive #hint {
-  opacity: 1;
-}
-
-#hint.scroll {
-  color: var(--accent);
-}
-
 /* ── Volume peek ─────────────────────────────────────── */
 /* Thin progress-bar style readout, modelled on NTS's web player track
-   bar. Sits where #hint lives so the two never compete for attention.
-   Hidden by default; the .peek class fades it in for ~1.5s after a
-   volume change in PASSIVE mode (see peekVolumeHint in carousel.js). */
+   bar. Hidden by default; the .peek class fades it in for ~1.5s after
+   a volume change in PASSIVE mode (see peekVolumeHint in carousel.js). */
 .volume-peek {
   position: absolute;
   bottom: 14px;
