@@ -221,12 +221,7 @@ body {
 .page-bg-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    180deg,
-    rgba(10, 10, 10, 0.55) 0%,
-    rgba(10, 10, 10, 0.7) 50%,
-    rgba(10, 10, 10, 0.92) 100%
-  );
+  background: rgba(0, 0, 0, 0.5);
 }
 
 /* ── Now Playing page ────────────────────────────────── */
@@ -427,11 +422,7 @@ body {
 .live-card .bg-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    180deg,
-    rgba(10, 10, 10, 0.55) 0%,
-    rgba(10, 10, 10, 0.78) 100%
-  );
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .live-card-inner {
@@ -485,12 +476,7 @@ body {
 .list-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    90deg,
-    rgba(10, 10, 10, 0.92) 0%,
-    rgba(10, 10, 10, 0.78) 40%,
-    rgba(10, 10, 10, 0.55) 100%
-  );
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .list-header {
