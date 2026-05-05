@@ -81,8 +81,8 @@ body {
 }
 
 .chrome-mark svg {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   display: block;
 }
 
@@ -96,11 +96,26 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.chrome-dots {
+/* ── Page-indicator dots (vertical, right gutter) ─────── */
+/* Stacked column down the right edge, centred vertically. Only visible
+   while the UI is in INTERACTIVE state — see #stage.interactive below. */
+.side-dots {
+  position: absolute;
+  right: clamp(8px, 1.5vmin, 16px);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
-  gap: 5px;
+  flex-direction: column;
+  gap: 14px;
   align-items: center;
-  isolation: isolate;
+  z-index: 10;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+#stage.interactive .side-dots {
+  opacity: 1;
 }
 
 .dot {
@@ -115,6 +130,57 @@ body {
 .dot.on {
   transform: scale(1.4);
   background: var(--accent);
+}
+
+/* ── Interactive vs. passive states ───────────────────── */
+/* PASSIVE (Now Playing in volume mode): #screen is full-bleed.
+   INTERACTIVE (everything else): #screen insets by a small gutter on
+   all sides, leaving room for the vertical dots column on the right.
+   The chrome bar and bottom hint stay full-width across both states. */
+#screen {
+  transition: inset 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Gutter matches the chrome bar height so in INTERACTIVE mode the chrome
+   sits cleanly outside the artwork rather than blending into it. The
+   rounded clip lives here too, so every page (NP / Live / list) inherits
+   the same squircle boundary. */
+#stage.interactive #screen {
+  inset: 36px;
+  border-radius: 20px;
+}
+
+/* Subtle white outline marking the focused surface in INTERACTIVE mode.
+   Applied to:
+     - the Now Playing page when in scroll mode (the whole screen is the
+       focused "card" — there's nothing else on the page to highlight).
+     - the focused channel on the Live page (Channel 1 / Channel 2).
+   List pages (Mixtapes / Moods / Genres) don't need this — the existing
+   focus-row enlargement and accent marker carry the cue. */
+/* Outlines target the topmost inset child (.np-content / .live-card-inner)
+   rather than the page/card itself — otherwise the bg-image and bg-overlay
+   layers, which are absolutely-positioned children with no z-index, paint
+   on top of the parent's box-shadow and hide the outline. */
+#stage.interactive .page[data-page-id="now-playing"] .np-content {
+  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.2);
+}
+
+.live-card.on .live-card-inner {
+  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.22);
+}
+
+/* Inner elements that draw the inset focus outline match the screen's
+   rounded radius so the shadow tracks the same curve. .np-content covers
+   the full Now Playing page; .live-card / .live-card-inner each represent
+   one of the two live channels (so they're independent squircles inside
+   the screen's clip). */
+#stage.interactive .np-content {
+  border-radius: 20px;
+}
+
+.live-card,
+.live-card .live-card-inner {
+  border-radius: 20px;
 }
 
 /* ── Page carousel (top-level, vertical) ─────────────── */
@@ -301,19 +367,6 @@ body {
   text-transform: uppercase;
 }
 
-.np-mode {
-  margin-top: 18px;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.7);
-}
-
-.np-mode.scroll {
-  color: var(--accent);
-}
-
 .np-error {
   font-family: var(--mono);
   font-size: 12px;
@@ -343,7 +396,7 @@ body {
   inset: 0;
   display: grid;
   grid-template-rows: 1fr 1fr;
-  gap: 0;
+  gap: 4px;
 }
 
 .live-card {
@@ -457,10 +510,15 @@ body {
   text-transform: uppercase;
 }
 
+/* Page subtitle and per-row description share their typography with the
+   Now Playing subtitle (.np-sub): display font, weight 600, tight tracking,
+   uppercase, ~55% paper. Sizes differ because the per-row description sits
+   inline with the row title and needs to stay small. */
 .list-sub {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(14px, 2.4vmin, 18px);
+  letter-spacing: -0.01em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.55);
   margin-top: 8px;
@@ -512,6 +570,18 @@ body {
   padding: 18px 0;
 }
 
+/* Subtle rounded outline tracing the list page's edge — same role as the
+   inset shadow on .np-content (NP scroll mode) and .live-card-inner
+   (focused live channel). Lives as the topmost child of the list page so
+   it paints above the bg-image and overlay layers. */
+.list-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.2);
+}
+
 .list-row.on .list-name {
   font-size: clamp(32px, 7vmin, 56px);
   letter-spacing: -0.04em;
@@ -528,12 +598,13 @@ body {
 }
 
 .list-sub-row {
-  font-family: var(--mono);
-  font-weight: 500;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: rgba(244, 241, 234, 0.6);
-  margin-left: 8px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(11px, 1.6vmin, 13px);
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: rgba(244, 241, 234, 0.55);
+  margin-left: 12px;
 }
 
 .list-row.on .list-sub-row {
@@ -542,10 +613,10 @@ body {
 
 .list-marker {
   position: absolute;
-  left: -56px;
+  left: -40px;
   top: 50%;
   transform: translateY(-50%);
-  width: 40px;
+  width: 28px;
   height: 3px;
   background: var(--accent);
   opacity: 0;
@@ -579,6 +650,11 @@ body {
 }
 
 /* ── Hint footer ─────────────────────────────────────── */
+/* Single home for navigation cues and the scroll-mode indicator. Hidden
+   in PASSIVE state (Now Playing in volume mode) so the resting screen
+   stays clean; fades back in whenever the UI is INTERACTIVE. The .scroll
+   variant tints orange — applied when on Now Playing in scroll mode to
+   echo the previous .np-mode.scroll treatment. */
 #hint {
   position: absolute;
   bottom: 12px;
@@ -592,4 +668,66 @@ body {
   color: rgba(244, 241, 234, 0.4);
   z-index: 10;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+#stage.interactive #hint {
+  opacity: 1;
+}
+
+#hint.scroll {
+  color: var(--accent);
+}
+
+/* ── Volume peek ─────────────────────────────────────── */
+/* Thin progress-bar style readout, modelled on NTS's web player track
+   bar. Sits where #hint lives so the two never compete for attention.
+   Hidden by default; the .peek class fades it in for ~1.5s after a
+   volume change in PASSIVE mode (see peekVolumeHint in carousel.js). */
+.volume-peek {
+  position: absolute;
+  bottom: 14px;
+  left: 56px;
+  right: 56px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 11;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.volume-peek.peek {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.volume-peek-track {
+  flex: 1;
+  height: 2px;
+  background: rgba(244, 241, 234, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.volume-peek-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--paper);
+  transition: width 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.volume-peek-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(244, 241, 234, 0.75);
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: right;
 }

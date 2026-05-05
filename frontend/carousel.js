@@ -1,6 +1,9 @@
-const LONG_PRESS_MS = 500;
+const LONG_PRESS_MS = 300;
 const PAGE_PREFETCH_THRESHOLD = 5;
 const VOLUME_STEP = 5;
+const IDLE_RETURN_PLAYING_MS = 10000;
+const IDLE_RETURN_OTHERWISE_MS = 20000;
+const VOLUME_PEEK_MS = 750;
 
 const TOP_PAGES = [
   { id: "now-playing", kind: "now-playing", label: "NOW PLAYING" },
@@ -17,10 +20,15 @@ const DECK_LABELS = {
   genres: "GENRES",
 };
 
+const stageEl = document.getElementById("stage");
 const screenEl = document.getElementById("screen");
 const chromeLabelEl = document.getElementById("chrome-label");
 const chromeTimeEl = document.getElementById("chrome-time");
-const chromeDotsEl = document.getElementById("chrome-dots");
+const sideDotsEl = document.getElementById("side-dots");
+const hintEl = document.getElementById("hint");
+const volumePeekEl = document.getElementById("volume-peek");
+const volumePeekFillEl = volumePeekEl?.querySelector(".volume-peek-fill");
+const volumePeekLabelEl = volumePeekEl?.querySelector(".volume-peek-label");
 
 const decks = {};
 const deckMeta = {};
@@ -157,7 +165,13 @@ function clickTop() {
         send({ type: nowPlaying.paused ? "resume" : "pause" });
       }
     } else if (nowPlaying.state !== "idle") {
+      // Stopping playback from scroll mode is a "we're done here" signal —
+      // drop back to volume mode (PASSIVE) so the UI returns to its
+      // resting state alongside the audio stop.
       send({ type: "stop" });
+      nowPlayingMode = "volume";
+      renderTopActivePage();
+      updateInteractiveState();
     }
     return;
   }
@@ -222,14 +236,13 @@ function longPress() {
       // reflect any upstream changes.
       if (nowPlayingMode === "scroll") send({ type: "refresh_live" });
       renderTopActivePage();
+      updateInteractiveState();
       return;
     }
-    // On any other top-level page: jump to Now Playing and reset cursors.
-    entry.pageIndex = 0;
-    resetTopCursors(0);
-    updateTopTransform();
-    updateChrome();
-    refreshAllTopPages();
+    // On any other top-level page: returning to Now Playing implies
+    // exiting INTERACTIVE mode too — same code path the idle timeout
+    // uses, so user-initiated and timed returns behave identically.
+    goToTopLevel();
     return;
   }
   // Drilled in: pop to parent. Preserve cursors so the user can quickly
@@ -268,23 +281,44 @@ function resetTopCursors(focusedPageIndex) {
   }
 }
 
-// Refresh focus highlight on all top pages, including off-screen ones, so a
-// reset is reflected before the user slides into a page (no stale highlight).
-function refreshAllTopPages() {
-  if (!topMode) return;
-  const activeId = TOP_PAGES[stack[0].pageIndex].id;
-  for (const page of TOP_PAGES) {
-    renderTopPageContent(page, page.id === activeId);
-  }
-}
-
 function adjustVolume(delta) {
   const cur = nowPlaying.volume ?? 60;
   const next = Math.max(0, Math.min(100, cur + delta));
-  if (next === cur) return;
-  nowPlaying.volume = next; // optimistic; backend will echo back
-  send({ type: "set_volume", value: next });
-  updateNowPlayingMode();
+  if (next !== cur) {
+    nowPlaying.volume = next; // optimistic; backend will echo back
+    send({ type: "set_volume", value: next });
+  }
+  // Always peek — even at the rails (VOL 0 / VOL 100), the user still
+  // wants visual confirmation that their input registered.
+  peekVolumeHint();
+}
+
+// Volume changes happen in PASSIVE mode where the hint is faded out.
+// Briefly fade in a thin progress bar showing the current volume value,
+// then fade out after a short delay. Re-arms on each rotation so the
+// peek stays up for as long as the user keeps twisting.
+let volumePeekTimer = null;
+
+function peekVolumeHint() {
+  if (!volumePeekEl || !volumePeekFillEl || !volumePeekLabelEl) return;
+  if (isInteractive()) return; // chrome's already busy — leave the user be
+  const vol = nowPlaying.volume ?? 60;
+  volumePeekFillEl.style.width = `${vol}%`;
+  volumePeekLabelEl.textContent = `VOL ${vol}`;
+  volumePeekEl.classList.add("peek");
+  if (volumePeekTimer !== null) clearTimeout(volumePeekTimer);
+  volumePeekTimer = setTimeout(() => {
+    if (volumePeekEl) volumePeekEl.classList.remove("peek");
+    volumePeekTimer = null;
+  }, VOLUME_PEEK_MS);
+}
+
+function clearVolumePeek() {
+  if (volumePeekTimer !== null) {
+    clearTimeout(volumePeekTimer);
+    volumePeekTimer = null;
+  }
+  if (volumePeekEl) volumePeekEl.classList.remove("peek");
 }
 
 function decodeEntities(encodedString) {
@@ -340,19 +374,25 @@ function setEyebrowMeta(eyebrowEl, timeRange, location) {
   if (l && lEl.textContent !== l) lEl.textContent = l;
 }
 
-function updateNowPlayingMode() {
-  const modeEl = screenEl.querySelector(
-    '.page[data-page-id="now-playing"] .np-mode'
-  );
-  if (!modeEl) return;
-  modeEl.classList.toggle("scroll", nowPlayingMode === "scroll");
-  if (nowPlayingMode === "volume") {
-    modeEl.textContent = `VOL ${nowPlaying.volume ?? 60}`;
+// The bottom hint is the single home for navigation cues + mode info. It
+// fades out entirely in PASSIVE mode (Now Playing in volume mode); in
+// INTERACTIVE mode it adapts: NP scroll mode shows the mode-specific
+// instruction (orange accent), every other interactive surface shows the
+// keyboard cheat sheet.
+function updateHint() {
+  if (!hintEl) return;
+  if (!isInteractive()) return;  // CSS handles the fade-out; leave content
+  const entry = currentEntry();
+  const onNp = entry.level === "top"
+    && TOP_PAGES[entry.pageIndex].kind === "now-playing";
+  if (onNp) {
+    hintEl.classList.add("scroll");
+    hintEl.textContent = nowPlaying.state === "idle"
+      ? "SCROLL MODE — ROTATE TO NAVIGATE"
+      : "SCROLL MODE — CLICK TO STOP, ROTATE TO NAVIGATE";
   } else {
-    modeEl.textContent =
-      nowPlaying.state === "idle"
-        ? "SCROLL MODE — ROTATE TO NAVIGATE"
-        : "SCROLL MODE — CLICK TO STOP, ROTATE TO NAVIGATE";
+    hintEl.classList.remove("scroll");
+    hintEl.textContent = "↑↓ ←→  ROTATE · ENTER CLICK · HOLD ENTER LONG-PRESS";
   }
 }
 
@@ -419,22 +459,45 @@ function updateChrome() {
     label = deckLabel(entry.deck);
   }
   if (chromeLabelEl) chromeLabelEl.textContent = label;
-  updateChromeDots(topIndex);
+  updateSideDots(topIndex);
+  updateInteractiveState();
 }
 
-function updateChromeDots(activeIndex) {
-  if (!chromeDotsEl) return;
-  if (chromeDotsEl.children.length !== TOP_PAGES.length) {
-    chromeDotsEl.innerHTML = "";
+function updateSideDots(activeIndex) {
+  if (!sideDotsEl) return;
+  if (sideDotsEl.children.length !== TOP_PAGES.length) {
+    sideDotsEl.innerHTML = "";
     for (let i = 0; i < TOP_PAGES.length; i++) {
       const dot = document.createElement("span");
       dot.className = "dot";
-      chromeDotsEl.appendChild(dot);
+      sideDotsEl.appendChild(dot);
     }
   }
-  for (let i = 0; i < chromeDotsEl.children.length; i++) {
-    chromeDotsEl.children[i].classList.toggle("on", i === activeIndex);
+  for (let i = 0; i < sideDotsEl.children.length; i++) {
+    sideDotsEl.children[i].classList.toggle("on", i === activeIndex);
   }
+}
+
+// PASSIVE = Now Playing in volume mode (the resting state). INTERACTIVE
+// covers everything else: NP scroll mode, any other top-level page, and
+// any drilled-in deck. Toggles a single class on #stage; CSS handles the
+// inset gutter + side-dots fade.
+function isInteractive() {
+  if (stack.length > 1) return true;
+  const top = TOP_PAGES[stack[0].pageIndex];
+  if (top.kind !== "now-playing") return true;
+  return nowPlayingMode !== "volume";
+}
+
+function updateInteractiveState() {
+  const interactive = isInteractive();
+  stageEl.classList.toggle("interactive", interactive);
+  if (interactive) armIdleTimer();
+  else clearIdleTimer();
+  // Any in-flight volume peek is bound to the previous state — discard it
+  // on transition so updateHint owns the hint cleanly.
+  clearVolumePeek();
+  updateHint();
 }
 
 function updateTopTransform() {
@@ -498,7 +561,6 @@ function ensureNowPlayingScaffold(pageEl) {
           <span class="np-time-duration"></span>
         </div>
       </div>
-      <div class="np-mode"></div>
     </div>
   `;
 }
@@ -575,9 +637,6 @@ function renderNowPlayingPage(pageEl) {
     pageEl.querySelector(".np-time-elapsed").textContent = formatElapsed(np.elapsed);
     pageEl.querySelector(".np-time-duration").textContent = formatElapsed(np.duration);
   }
-
-  // Mode indicator (volume / scroll).
-  updateNowPlayingMode();
 }
 
 function eyebrowText(np) {
@@ -816,6 +875,12 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
 
     scroll.appendChild(spacer());
     pageEl.appendChild(scroll);
+
+    // Topmost overlay — paints the subtle 1px outline at the page edge
+    // above the bg layers and the row content.
+    const frame = document.createElement("div");
+    frame.className = "list-frame";
+    pageEl.appendChild(frame);
   }
 
   // Update focus highlighting + bg image
@@ -973,6 +1038,8 @@ function connect() {
         // NP card off-screen but still in DOM — keep it fresh too.
         renderNowPlayingPage(screenEl.querySelector('.page[data-page-id="now-playing"]'));
       }
+      // Hint copy depends on np.state (idle vs playing), so refresh.
+      updateHint();
     }
   });
   ws.addEventListener("close", () => setTimeout(connect, 500));
@@ -985,6 +1052,29 @@ function handleEncoder(event) {
     click();
   } else if (event.event === "long_press") {
     longPress();
+  }
+  // Re-arm idle timer on every input. updateInteractiveState() (called
+  // from render paths) will clear it again if the input took us back to
+  // PASSIVE; otherwise we tick the new threshold from now.
+  if (isInteractive()) armIdleTimer();
+}
+
+// Auto-return to Now Playing in volume mode after a stretch of no input.
+// Only ticks while INTERACTIVE — cleared on entering PASSIVE.
+let idleTimer = null;
+
+function armIdleTimer() {
+  clearIdleTimer();
+  const ms = nowPlaying.state === "playing"
+    ? IDLE_RETURN_PLAYING_MS
+    : IDLE_RETURN_OTHERWISE_MS;
+  idleTimer = setTimeout(goToTopLevel, ms);
+}
+
+function clearIdleTimer() {
+  if (idleTimer !== null) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
   }
 }
 
