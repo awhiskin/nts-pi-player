@@ -2,7 +2,7 @@
   color-scheme: dark;
   --ink: #0a0a0a;
   --paper: #f4f1ea;
-  --paper-dim: rgba(244, 241, 234, 0.55);
+  --paper-dim: rgba(244, 241, 234, 0.65);
   --paper-faint: rgba(244, 241, 234, 0.18);
   --accent: #ff6a1f;
   --display: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -45,12 +45,13 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  height: 36px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 18px;
   font-family: var(--mono);
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -87,8 +88,8 @@ body {
 }
 
 .chrome-divider {
-  width: 1px;
-  height: 12px;
+  width: 2px;
+  height: 16px;
   background: rgba(244, 241, 234, 0.4);
 }
 
@@ -96,19 +97,14 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Page-indicator dots (vertical, right gutter) ─────── */
-/* Stacked column down the right edge, centred vertically. Only visible
+/* ── Page-indicator dots (chrome bar, horizontal) ────── */
+/* Lives inside .chrome-right, just before the clock. Only visible
    while the UI is in INTERACTIVE state — see #stage.interactive below. */
 .side-dots {
-  position: absolute;
-  right: clamp(8px, 1.5vmin, 16px);
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  flex-direction: row;
+  gap: 8px;
   align-items: center;
-  z-index: 10;
   pointer-events: none;
   opacity: 0;
   transition: opacity 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -134,53 +130,53 @@ body {
 
 /* ── Interactive vs. passive states ───────────────────── */
 /* PASSIVE (Now Playing in volume mode): #screen is full-bleed.
-   INTERACTIVE (everything else): #screen insets by a small gutter on
-   all sides, leaving room for the vertical dots column on the right.
-   The chrome bar stays full-width across both states. */
+   INTERACTIVE (everything else): #screen insets by a small uniform
+   gutter on all sides; the top inset clears the chrome bar with a
+   little breathing room. The chrome bar stays full-width across both
+   states. */
 #screen {
   transition: inset 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* Gutter matches the chrome bar height so in INTERACTIVE mode the chrome
-   sits cleanly outside the artwork rather than blending into it. The
-   rounded clip lives here too, so every page (NP / Live / list) inherits
-   the same squircle boundary. */
+/* Top clears the chrome bar; sides + bottom uniform. #screen keeps its
+   default overflow:hidden but is rectangular — rounding lives on each
+   .page below, so cards sliding vertically through #screen during page
+   transitions don't have their straight edges shaved by a curved parent
+   clip. */
 #stage.interactive #screen {
-  inset: 36px;
+  inset: 48px 12px 12px 12px;
+}
+
+/* Each page becomes its own rounded card in INTERACTIVE mode. .page
+   already has overflow:hidden, so its bg-image / bg-overlay layers are
+   clipped to the rounded shape too. */
+#stage.interactive .page {
+  border-radius: 20px;
+}
+
+/* Live cards are independent rounded squircles within the live page —
+   the rounded clip lives on .live-card itself (it has overflow:hidden +
+   bg-image children). .live-card-inner sits at inset:0 inside it and
+   doesn't need its own rounding. */
+.live-card {
   border-radius: 20px;
 }
 
 /* Subtle white outline marking the focused surface in INTERACTIVE mode.
    Applied to:
-     - the Now Playing page when in scroll mode (the whole screen is the
-       focused "card" — there's nothing else on the page to highlight).
-     - the focused channel on the Live page (Channel 1 / Channel 2).
-   List pages (Mixtapes / Moods / Genres) don't need this — the existing
-   focus-row enlargement and accent marker carry the cue. */
-/* Outlines target the topmost inset child (.np-content / .live-card-inner)
-   rather than the page/card itself — otherwise the bg-image and bg-overlay
-   layers, which are absolutely-positioned children with no z-index, paint
-   on top of the parent's box-shadow and hide the outline. */
-#stage.interactive .page[data-page-id="now-playing"] .np-content {
-  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.2);
-}
-
-.live-card.on .live-card-inner {
-  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.22);
-}
-
-/* Inner elements that draw the inset focus outline match the screen's
-   rounded radius so the shadow tracks the same curve. .np-content covers
-   the full Now Playing page; .live-card / .live-card-inner each represent
-   one of the two live channels (so they're independent squircles inside
-   the screen's clip). */
-#stage.interactive .np-content {
-  border-radius: 20px;
-}
-
-.live-card,
-.live-card .live-card-inner {
-  border-radius: 20px;
+     - the Now Playing page when in scroll mode.
+     - the focused channel on the Live page.
+   List pages get the same treatment via .list-frame below.
+   Pseudo-element offset 1px inward with 19px radius so the stroke sits
+   safely inside the parent's 20px rounded clip. */
+#stage.interactive .page[data-page-id="now-playing"] .np-content::after,
+.live-card.on .live-card-inner::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 19px;
+  border: 1px solid rgba(244, 241, 234, 0.28);
+  pointer-events: none;
 }
 
 /* ── Page carousel (top-level, vertical) ─────────────── */
@@ -239,6 +235,7 @@ body {
   align-items: center;
   gap: 12px;
   font-family: var(--mono);
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -327,19 +324,17 @@ body {
   font-size: clamp(14px, 2.4vmin, 18px);
   letter-spacing: -0.01em;
   text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.55);
+  color: rgba(244, 241, 234, 0.65);
   margin-top: 10px;
 }
 
 .np-progress {
-  margin-top: 24px;
   padding-top: 16px;
-  border-top: 1px solid var(--paper-faint);
 }
 
 .np-progress-bar {
   width: 100%;
-  height: 2px;
+  height: 4px;
   background: rgba(244, 241, 234, 0.18);
   overflow: hidden;
 }
@@ -355,15 +350,17 @@ body {
   justify-content: space-between;
   margin-top: 6px;
   font-family: var(--mono);
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.1em;
-  color: rgba(244, 241, 234, 0.55);
+  color: rgba(244, 241, 234, 0.65);
   font-variant-numeric: tabular-nums;
   text-transform: uppercase;
 }
 
 .np-error {
   font-family: var(--mono);
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -428,7 +425,7 @@ body {
 .live-card-inner {
   position: absolute;
   inset: 0;
-  padding: 36px 56px 32px;
+  padding: 24px 32px 24px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -506,7 +503,7 @@ body {
   font-size: clamp(14px, 2.4vmin, 18px);
   letter-spacing: -0.01em;
   text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.55);
+  color: rgba(244, 241, 234, 0.65);
   margin-top: 8px;
 }
 
@@ -538,7 +535,7 @@ body {
 
 .list-num {
   font-family: var(--mono);
-  font-weight: 500;
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.1em;
   color: rgba(244, 241, 234, 0.4);
@@ -557,15 +554,17 @@ body {
 }
 
 /* Subtle rounded outline tracing the list page's edge — same role as the
-   inset shadow on .np-content (NP scroll mode) and .live-card-inner
-   (focused live channel). Lives as the topmost child of the list page so
-   it paints above the bg-image and overlay layers. */
+   ::after pseudo-elements on .np-content (NP scroll mode) and
+   .live-card-inner (focused live channel). Lives as the topmost child of
+   the list page so it paints above the bg-image and overlay layers.
+   Offset 1px inward with a slightly tighter radius so the stroke sits
+   safely inside .page's rounded clip. */
 .list-frame {
   position: absolute;
-  inset: 0;
+  inset: 1px;
   pointer-events: none;
-  border-radius: 20px;
-  box-shadow: inset 0 0 0 1px rgba(244, 241, 234, 0.2);
+  border-radius: 19px;
+  border: 1px solid rgba(244, 241, 234, 0.28);
 }
 
 .list-row.on .list-name {
@@ -589,7 +588,7 @@ body {
   font-size: clamp(11px, 1.6vmin, 13px);
   letter-spacing: -0.01em;
   text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.55);
+  color: rgba(244, 241, 234, 0.65);
   margin-left: 12px;
 }
 
@@ -632,7 +631,7 @@ body {
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(244, 241, 234, 0.55);
+  color: rgba(244, 241, 234, 0.65);
 }
 
 /* ── Volume peek ─────────────────────────────────────── */
@@ -677,6 +676,7 @@ body {
 
 .volume-peek-label {
   font-family: var(--mono);
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
