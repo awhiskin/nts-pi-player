@@ -162,6 +162,14 @@ body {
   border-radius: 20px;
 }
 
+.live-grid .live-card:first-child {
+  border-radius: 20px 20px 0 0 !important;
+}
+
+.live-grid .live-card:last-child {
+  border-radius: 0 0 20px 20px !important;
+}
+
 /* Subtle white outline marking the focused surface in INTERACTIVE mode.
    Applied to:
      - the Now Playing page when in scroll mode.
@@ -175,7 +183,7 @@ body {
   position: absolute;
   inset: 1px;
   border-radius: 19px;
-  border: 1px solid rgba(244, 241, 234, 0.28);
+  /* border: 1px solid rgba(244, 241, 234, 0.28); */
   pointer-events: none;
 }
 
@@ -240,7 +248,7 @@ body {
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(244, 241, 234, 0.85);
-  margin-bottom: 14px;
+  margin-bottom: 24px;
 }
 
 .live-pip {
@@ -388,13 +396,13 @@ body {
   inset: 0;
   display: grid;
   grid-template-rows: 1fr 1fr;
-  gap: 4px;
+  /* gap: 4px; */
 }
 
 .live-card {
   position: relative;
   overflow: hidden;
-  border-top: 1px solid rgba(244, 241, 234, 0.12);
+  /* border-top: 1px solid rgba(244, 241, 234, 0.12); */
   transition: filter 320ms;
   filter: brightness(0.55) saturate(0.7);
 }
@@ -564,7 +572,7 @@ body {
   inset: 1px;
   pointer-events: none;
   border-radius: 19px;
-  border: 1px solid rgba(244, 241, 234, 0.28);
+  /* border: 1px solid rgba(244, 241, 234, 0.28); */
 }
 
 .list-row.on .list-name {

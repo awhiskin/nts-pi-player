@@ -226,7 +226,7 @@ def _parse_episode(entry: dict) -> Optional[dict]:
     return {
         "start": start,
         "end": end,
-        "title": entry.get("broadcast_title") or details.get("name") or "",
+        "title": details.get("name") or entry.get("broadcast_title") or "",
         "artwork": _artwork(details.get("media") or {}),
         "location": _live_location(entry, details),
     }
