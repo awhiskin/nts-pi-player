@@ -80,6 +80,7 @@ class Player:
 
     async def play(self, url: str) -> None:
         await self._send("loadfile", url)
+        await self._send("set_property", "pause", False)
 
     async def pause(self) -> None:
         await self._send("set_property", "pause", True)
