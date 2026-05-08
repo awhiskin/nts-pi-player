@@ -127,8 +127,10 @@ function moveTopCursor(direction) {
     entry.pageIndex = newPage;
     updateTopTransform();
     updateChrome();
-    // Refresh now-playing page bg etc.
-    renderTopActivePage();
+    // Render the new active page + its neighbours so the slide reveals
+    // already-populated content (the next page over may have been
+    // outside the previous neighbourhood and still empty).
+    renderTopNeighborhood();
   }
 }
 
@@ -392,6 +394,23 @@ function splitTitleOnWith(raw) {
   return { main: m[1].trim(), with: m[2].trim() };
 }
 
+// List rows render as two stacked lines: the show name on top, then a
+// meta line combining the "w/ Host" tail (when present) with the card's
+// subtitle (date/location for episodes, description for mixtapes…).
+// Top-level mood/genre rows have no subtitle and no host, so meta is
+// empty and the row collapses to a single title line.
+function listRowParts(card) {
+  const split = splitTitleOnWith(decodeEntities(card.label || ""));
+  const subtitle = decodeEntities(card.subtitle || "").trim();
+  const segments = [];
+  if (split.with) segments.push(split.with);
+  if (subtitle) segments.push(subtitle);
+  return {
+    main: split.main.toUpperCase(),
+    meta: segments.join(" · ").toUpperCase(),
+  };
+}
+
 // Show / hide the time-range and location segments in the eyebrow row,
 // each paired with its preceding 1px divider. Used by Now Playing (live
 // channels) and the Live page cards.
@@ -439,6 +458,12 @@ function maybePrefetchDeck(entry) {
 }
 
 // ── Rendering ──────────────────────────────────────────────────
+// Off-screen pages further than 1 step away are never visible during a
+// 180ms carousel slide, so we skip rendering them. Their data still
+// flows into the in-memory deck cache and is picked up the next time
+// they fall within the active page's neighbourhood.
+const RENDER_NEIGHBOR_RADIUS = 1;
+
 function render() {
   const entry = currentEntry();
   if (entry.level === "top") {
@@ -447,12 +472,22 @@ function render() {
       topMode = true;
     }
     updateTopTransform();
-    TOP_PAGES.forEach((p, i) => renderTopPageContent(p, i === entry.pageIndex));
+    renderTopNeighborhood();
   } else {
     topMode = false;
     renderDeckPage(entry);
   }
   updateChrome();
+}
+
+function renderTopNeighborhood() {
+  if (!topMode) return;
+  const entry = currentEntry();
+  TOP_PAGES.forEach((p, i) => {
+    if (Math.abs(i - entry.pageIndex) <= RENDER_NEIGHBOR_RADIUS) {
+      renderTopPageContent(p, i === entry.pageIndex);
+    }
+  });
 }
 
 function renderTopActivePage() {
@@ -865,6 +900,8 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
       row.className = "list-row" + (card.kind === "unplayable" ? " unplayable" : "");
       row.dataset.i = String(i);
 
+      const { main, meta } = listRowParts(card);
+
       const num = document.createElement("span");
       num.className = "list-num";
       num.textContent = String(i + 1).padStart(2, "0");
@@ -872,14 +909,14 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
 
       const name = document.createElement("span");
       name.className = "list-name";
-      name.textContent = (card.label || "").toUpperCase();
+      name.textContent = main;
       row.appendChild(name);
 
-      if (card.subtitle) {
-        const sub = document.createElement("span");
-        sub.className = "list-sub-row";
-        sub.textContent = card.subtitle.toUpperCase();
-        row.appendChild(sub);
+      if (meta) {
+        const metaEl = document.createElement("span");
+        metaEl.className = "list-row-meta";
+        metaEl.textContent = meta;
+        row.appendChild(metaEl);
       }
 
       const marker = document.createElement("span");
@@ -891,12 +928,6 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
 
     scroll.appendChild(spacer());
     pageEl.appendChild(scroll);
-
-    // Topmost overlay — paints the subtle 1px outline at the page edge
-    // above the bg layers and the row content.
-    const frame = document.createElement("div");
-    frame.className = "list-frame";
-    pageEl.appendChild(frame);
   }
 
   // Update focus highlighting + bg image
@@ -981,11 +1012,15 @@ function handleDeckData(msg) {
   }
   prefetchArtwork(cards);
 
-  // Re-render whichever surface is showing this deck
+  // Re-render whichever surface is showing this deck. Off-neighbourhood
+  // top pages stay deferred — the next render-neighbourhood pass picks
+  // them up from the deck cache when they come into range.
   const entry = currentEntry();
-  if (entry.level === "top") {
-    const page = TOP_PAGES.find((p) => p.deck === deckId);
-    if (page && topMode) renderTopPageContent(page, page.id === TOP_PAGES[entry.pageIndex].id);
+  if (entry.level === "top" && topMode) {
+    const i = TOP_PAGES.findIndex((p) => p.deck === deckId);
+    if (i !== -1 && Math.abs(i - entry.pageIndex) <= RENDER_NEIGHBOR_RADIUS) {
+      renderTopPageContent(TOP_PAGES[i], i === entry.pageIndex);
+    }
   } else if (entry.deck === deckId) {
     renderDeckPage(entry);
   }
@@ -1046,13 +1081,15 @@ function connect() {
     else if (msg.type === "deck_data") handleDeckData(msg);
     else if (msg.type === "now_playing") {
       nowPlaying = msg;
-      // Refresh now-playing page if visible.
+      // Refresh NP only if it's the active page or one over — far-off
+      // updates are wasted work; the next neighbourhood render reads the
+      // latest nowPlaying state when NP comes back into range.
       const entry = currentEntry();
-      if (entry.level === "top" && TOP_PAGES[entry.pageIndex].kind === "now-playing") {
-        renderTopActivePage();
-      } else if (entry.level === "top") {
-        // NP card off-screen but still in DOM — keep it fresh too.
-        renderNowPlayingPage(screenEl.querySelector('.page[data-page-id="now-playing"]'));
+      if (entry.level === "top" && topMode) {
+        const npIndex = TOP_PAGES.findIndex((p) => p.kind === "now-playing");
+        if (Math.abs(entry.pageIndex - npIndex) <= RENDER_NEIGHBOR_RADIUS) {
+          renderTopPageContent(TOP_PAGES[npIndex], entry.pageIndex === npIndex);
+        }
       }
     }
   });
@@ -1146,10 +1183,12 @@ document.addEventListener("keyup", (e) => {
 
 // ── Clock ──────────────────────────────────────────────────────
 function tickClock() {
-  chromeTimeEl.textContent = formatTimeOfDay(new Date());
+  const now = new Date();
+  chromeTimeEl.textContent = formatTimeOfDay(now);
+  const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+  setTimeout(tickClock, msToNextMinute);
 }
 tickClock();
-setInterval(tickClock, 1000 * 30);
 
 // ── Boot ───────────────────────────────────────────────────────
 render();
