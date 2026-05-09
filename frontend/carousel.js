@@ -5,6 +5,26 @@ const IDLE_RETURN_PLAYING_MS = 20000;
 const IDLE_RETURN_OTHERWISE_MS = 60000;
 const VOLUME_PEEK_MS = 750;
 
+// List-row geometry, sourced from the matching CSS custom properties
+// in :root. Read once at module load — the kiosk doesn't resize and
+// the values are static — so we never have to measure rows in the DOM
+// to know where the .list-track should be translated.
+const LIST_GEOM = (() => {
+  const cs = getComputedStyle(document.documentElement);
+  const px = (name) => parseFloat(cs.getPropertyValue(name));
+  const padY = px("--list-row-pad-y");
+  const padYOn = px("--list-row-pad-y-on");
+  const gap = px("--list-row-gap");
+  const titleH = px("--list-title-h");
+  const titleHOn = px("--list-title-h-on");
+  const metaH = px("--list-meta-h");
+  return {
+    rowHeightWithMeta: padY * 2 + titleH + gap + metaH,
+    rowHeightNoMeta: padY * 2 + titleH,
+    focusedTitleCentre: padYOn + titleHOn / 2,
+  };
+})();
+
 const TOP_PAGES = [
   { id: "now-playing", kind: "now-playing", label: "NOW PLAYING" },
   { id: "live",        kind: "live",        label: "LIVE",     deck: "live" },
@@ -957,18 +977,23 @@ function applyListFocus(pageEl, cards, focused) {
     row.style.opacity = i === focused ? "1" : String(Math.max(0.18, 0.7 - dist * 0.15));
   });
 
-  // Translate the track so the focused row's TITLE centre lands at
-  // .list-track's origin (the viewport's vertical centre via top: 50%
-  // in CSS). The marker is pinned at that same point — by aligning to
-  // the title rather than the row's geometric centre, the marker
-  // visually pairs with the dominant line and the meta sits beneath.
-  const focusedRow = pageEl.querySelector(`.list-row[data-i="${focused}"]`);
+  // Compute translateY from the focused index using the deterministic
+  // row geometry in LIST_GEOM. No DOM reads — measurements taken
+  // mid-transition (when the focus class flips font-size) used to
+  // produce drift; with fixed sizes the math is exact every time.
   const track = pageEl.querySelector(".list-track");
-  if (focusedRow && track) {
-    const name = focusedRow.querySelector(".list-name") || focusedRow;
-    const center = name.offsetTop + name.offsetHeight / 2;
-    track.style.transform = `translateY(${-center}px)`;
+  if (track) {
+    track.style.transform = `translateY(${listTrackOffset(cards, focused)}px)`;
   }
+}
+
+function listTrackOffset(cards, focusedIdx) {
+  let y = 0;
+  for (let i = 0; i < focusedIdx; i++) {
+    const hasMeta = listRowParts(cards[i]).meta !== "";
+    y += hasMeta ? LIST_GEOM.rowHeightWithMeta : LIST_GEOM.rowHeightNoMeta;
+  }
+  return -(y + LIST_GEOM.focusedTitleCentre);
 }
 
 function renderLoading(el, label) {

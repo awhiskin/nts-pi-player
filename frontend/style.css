@@ -12,6 +12,19 @@
   --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --page-pad-x: 56px;
+
+  /* List-row geometry — deterministic so the .list-track translateY
+     can be computed purely from the focused index in JS, with no DOM
+     measurement and no race against the focus transitions. Title and
+     meta both set line-height: 1, so their box heights equal their
+     font-sizes. The focused-title size (--list-title-h-on) was chosen
+     to match 7vmin at the Pi's 1024×600 target. */
+  --list-row-pad-y: 9px;
+  --list-row-pad-y-on: 18px;
+  --list-row-gap: 4px;
+  --list-title-h: 26px;
+  --list-title-h-on: 42px;
+  --list-meta-h: 12px;
 }
 
 * {
@@ -201,7 +214,7 @@ body {
 .page-bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 /* ── Now Playing page ────────────────────────────────── */
@@ -401,7 +414,7 @@ body {
 .live-card .bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .live-card-inner {
@@ -455,7 +468,7 @@ body {
 .list-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .list-header {
@@ -513,9 +526,9 @@ body {
 
 .list-focus-marker {
   position: absolute;
-  left: calc(var(--page-pad-x) - 40px);
+  left: calc(var(--page-pad-x) - 42px);
   top: 50%;
-  width: 28px;
+  width: 24px;
   height: 3px;
   background: var(--accent);
   transform: translateY(-50%);
@@ -532,8 +545,8 @@ body {
   display: grid;
   grid-template-columns: 28px 1fr;
   column-gap: 18px;
-  row-gap: 4px;
-  padding: 9px 0;
+  row-gap: var(--list-row-gap);
+  padding: var(--list-row-pad-y) 0;
   font-family: var(--display);
   font-weight: 800;
   text-transform: uppercase;
@@ -557,7 +570,7 @@ body {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-  font-size: 26px;
+  font-size: var(--list-title-h);
   line-height: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -571,7 +584,8 @@ body {
   min-width: 0;
   font-family: var(--display);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--list-meta-h);
+  line-height: 1;
   letter-spacing: 0.04em;
   color: var(--paper-soft);
   white-space: nowrap;
@@ -581,11 +595,11 @@ body {
 }
 
 .list-row.on {
-  padding: 18px 0;
+  padding: var(--list-row-pad-y-on) 0;
 }
 
 .list-row.on .list-name {
-  font-size: clamp(32px, 7vmin, 56px);
+  font-size: var(--list-title-h-on);
   letter-spacing: -0.04em;
   color: var(--paper);
 }
