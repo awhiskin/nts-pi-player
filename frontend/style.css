@@ -270,13 +270,11 @@ body {
 }
 
 @keyframes pip-pulse {
-  0%, 100% {
+  0% {
     box-shadow: 0 0 0 0 rgba(255, 106, 31, 0.55);
-    transform: scale(1);
   }
-  50% {
-    box-shadow: 0 0 0 8px rgba(255, 106, 31, 0);
-    transform: scale(1.1);
+  100% {
+    box-shadow: 0 0 0 10px rgba(255, 106, 31, 0);
   }
 }
 
@@ -305,7 +303,7 @@ body {
    are hidden when the segment is empty so the eyebrow collapses
    cleanly. */
 .np-eyebrow-dot {
-  color: var(--paper-soft);
+  font-weight: 900;
 }
 
 .np-sub {
