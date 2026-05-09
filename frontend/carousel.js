@@ -436,19 +436,19 @@ function listRowParts(card) {
 // channels) and the Live page cards.
 function setEyebrowMeta(eyebrowEl, timeRange, location) {
   const tEl = eyebrowEl.querySelector(".np-eyebrow-time");
-  const tPipe = eyebrowEl.querySelector(".time-pipe");
+  const tDot = eyebrowEl.querySelector(".time-dot");
   const lEl = eyebrowEl.querySelector(".np-eyebrow-loc");
-  const lPipe = eyebrowEl.querySelector(".loc-pipe");
+  const lDot = eyebrowEl.querySelector(".loc-dot");
 
   const t = (timeRange || "").toUpperCase();
   const l = (location || "").toUpperCase();
 
   tEl.hidden = !t;
-  tPipe.hidden = !t;
+  tDot.hidden = !t;
   if (t && tEl.textContent !== t) tEl.textContent = t;
 
   lEl.hidden = !l;
-  lPipe.hidden = !l;
+  lDot.hidden = !l;
   if (l && lEl.textContent !== l) lEl.textContent = l;
 }
 
@@ -614,20 +614,20 @@ function ensureNowPlayingScaffold(pageEl) {
     <div class="page-bg-image" hidden></div>
     <div class="page-bg-overlay"></div>
     <div class="np-content">
-      <div class="np-eyebrow">
+      <div class="np-eyebrow meta-label">
         <span class="live-pip"></span>
         <span class="eyebrow-spinner" hidden></span>
         <span class="np-status"></span>
-        <span class="np-eyebrow-pipe time-pipe" hidden></span>
+        <span class="np-eyebrow-dot time-dot" hidden>&nbsp;·&nbsp;</span>
         <span class="np-eyebrow-time" hidden></span>
-        <span class="np-eyebrow-pipe loc-pipe" hidden></span>
+        <span class="np-eyebrow-dot loc-dot" hidden>&nbsp;·&nbsp;</span>
         <span class="np-eyebrow-loc" hidden></span>
       </div>
       <h1 class="np-show"></h1>
       <div class="np-sub" hidden></div>
       <div class="np-progress" hidden>
         <div class="np-progress-bar"><div class="np-progress-fill"></div></div>
-        <div class="np-progress-times">
+        <div class="np-progress-times meta-label">
           <span class="np-time-elapsed"></span>
           <span class="np-time-duration"></span>
         </div>
@@ -656,8 +656,8 @@ function renderNowPlayingPage(pageEl) {
   }
 
   // Eyebrow: pip + status text on the left; for live channels the row
-  // continues with time-range + location segments, each preceded by a thin
-  // pipe divider. The pip pulses when actively playing live, sits dim
+  // continues with time-range + location segments, each preceded by a
+  // middle-dot. The pip pulses when actively playing live, sits dim
   // while paused/error, and is hidden for mixtapes / episodes / idle.
   // While loading, the pip is replaced by a small inline spinner so the
   // marker keeps its position next to the status word.
@@ -744,12 +744,12 @@ function buildLiveCardScaffold(index) {
     <div class="bg-image"></div>
     <div class="bg-overlay"></div>
     <div class="live-card-inner">
-      <div class="np-eyebrow">
+      <div class="np-eyebrow meta-label">
         <span class="live-pip"></span>
         <span class="np-status"></span>
-        <span class="np-eyebrow-pipe time-pipe" hidden></span>
+        <span class="np-eyebrow-dot time-dot" hidden>&nbsp;·&nbsp;</span>
         <span class="np-eyebrow-time" hidden></span>
-        <span class="np-eyebrow-pipe loc-pipe" hidden></span>
+        <span class="np-eyebrow-dot loc-dot" hidden>&nbsp;·&nbsp;</span>
         <span class="np-eyebrow-loc" hidden></span>
       </div>
       <div class="np-show"></div>
@@ -925,7 +925,7 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
       const { main, meta } = listRowParts(card);
 
       const num = document.createElement("span");
-      num.className = "list-num";
+      num.className = "list-num meta-label";
       num.textContent = String(i + 1).padStart(2, "0");
       row.appendChild(num);
 
@@ -1004,7 +1004,7 @@ function renderLoading(el, label) {
   spinner.className = "spinner";
   wrap.appendChild(spinner);
   const lab = document.createElement("div");
-  lab.className = "loading-label";
+  lab.className = "loading-label meta-label";
   lab.textContent = label;
   wrap.appendChild(lab);
   el.appendChild(wrap);

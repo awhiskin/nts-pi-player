@@ -294,7 +294,7 @@ def _next_episode_for(card_id: str, now_utc: datetime) -> Optional[dict]:
 def _episode_time_range(ep: dict) -> str:
     return (
         f"{ep['start'].astimezone().strftime('%H:%M')}"
-        f" → "
+        f" - "
         f"{ep['end'].astimezone().strftime('%H:%M')}"
     )
 
@@ -673,7 +673,7 @@ def _format_time_range(starts: str, ends: str) -> str:
         return ""
     s_local = s.astimezone()
     e_local = e.astimezone()
-    return f"{s_local.strftime('%H:%M')} → {e_local.strftime('%H:%M')}"
+    return f"{s_local.strftime('%H:%M')} - {e_local.strftime('%H:%M')}"
 
 
 def _live_location(now: dict, details: dict) -> str:

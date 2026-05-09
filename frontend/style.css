@@ -9,7 +9,6 @@
   --paper-faint: rgba(244, 241, 234, 0.18);
   --accent: #ff6a1f;
   --display: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --page-pad-x: 56px;
 
@@ -57,6 +56,20 @@ body {
   overflow: hidden;
 }
 
+/* ── Metadata labels ─────────────────────────────────── */
+/* Shared typography recipe for every small-caps metadata label
+   (chrome bar, NP / live eyebrows, list-row index, time and volume
+   readouts, loading state). Per-element rules carry only colour and
+   layout overrides. font-variant-numeric inherits, so it propagates
+   to digit-bearing children of containers carrying this class. */
+.meta-label {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Top chrome ─────────────────────────────────────────── */
 .chrome {
   position: absolute;
@@ -68,11 +81,6 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 18px;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--paper-strong);
   z-index: 10;
   pointer-events: none;
@@ -102,10 +110,6 @@ body {
   width: 24px;
   height: 24px;
   display: block;
-}
-
-.chrome-time {
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── Page-indicator dots (chrome bar, horizontal) ────── */
@@ -230,12 +234,6 @@ body {
 .np-eyebrow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
   color: var(--paper-strong);
   margin-bottom: 24px;
 }
@@ -248,6 +246,7 @@ body {
   box-shadow: 0 0 0 0 var(--accent);
   animation: pip-pulse 1600ms ease-in-out infinite;
   flex-shrink: 0;
+  margin-right: 8px;
 }
 
 .live-pip.idle {
@@ -267,6 +266,7 @@ body {
   animation: spin 0.9s linear infinite;
   flex-shrink: 0;
   box-sizing: border-box;
+  margin-right: 8px;
 }
 
 @keyframes pip-pulse {
@@ -299,20 +299,13 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Eyebrow time / location segments and their preceding pipe dividers. The
-   pipe matches the chrome bar's vertical rule, slightly shorter to suit the
-   smaller eyebrow type. Each pair is hidden when its value is empty so the
-   eyebrow collapses cleanly. */
-.np-eyebrow-pipe {
-  width: 1px;
-  height: 10px;
-  background: var(--paper-soft);
-  flex-shrink: 0;
-}
-
-.np-eyebrow-time,
-.np-eyebrow-loc {
-  font-variant-numeric: tabular-nums;
+/* Middle-dot dividers between eyebrow segments — same separator the
+   list-row meta line uses, so all metadata reads with one visual
+   vocabulary. Each dot pairs with the segment that follows it; both
+   are hidden when the segment is empty so the eyebrow collapses
+   cleanly. */
+.np-eyebrow-dot {
+  color: var(--paper-soft);
 }
 
 .np-sub {
@@ -346,21 +339,10 @@ body {
   display: flex;
   justify-content: space-between;
   margin-top: 6px;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.1em;
   color: var(--paper-dim);
-  font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
 }
 
 .np-error {
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
   color: var(--accent);
   margin-top: 10px;
 }
@@ -559,10 +541,6 @@ body {
   grid-column: 1;
   grid-row: 1;
   align-self: center;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.1em;
   color: var(--paper-soft);
 }
 
@@ -634,10 +612,6 @@ body {
 }
 
 .loading-label {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
   color: var(--paper-dim);
 }
 
@@ -682,13 +656,7 @@ body {
 }
 
 .volume-peek-label {
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--paper-strong);
-  font-variant-numeric: tabular-nums;
   min-width: 64px;
   text-align: right;
 }
