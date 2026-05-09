@@ -39,6 +39,8 @@ body {
   font-family: var(--display);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  user-select: none;
+  cursor: default;
 }
 
 #stage {
