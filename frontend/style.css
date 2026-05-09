@@ -493,12 +493,33 @@ body {
   position: absolute;
   inset: 150px 0 24px 0;
   overflow: hidden;
-  padding-left: var(--page-pad-x);
-  padding-right: var(--page-pad-x);
 }
 
-.list-spacer {
-  height: 80px;
+/* Fixed-centre highlight model: rows live inside .list-track, which is
+   anchored at the viewport's vertical centre via top:50% and slid up
+   or down via translateY so the focused row's centre sits exactly at
+   that origin. The .list-focus-marker is pinned at the same point, so
+   the focused row is always directly under the marker — no chase. */
+.list-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  padding: 0 var(--page-pad-x);
+  transform: translateY(0);
+  transition: transform 180ms var(--ease-out);
+  will-change: transform;
+}
+
+.list-focus-marker {
+  position: absolute;
+  left: calc(var(--page-pad-x) - 40px);
+  top: 50%;
+  width: 28px;
+  height: 3px;
+  background: var(--accent);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 /* Two-line row: title on grid row 1, optional meta line on row 2.
@@ -582,24 +603,6 @@ body {
   text-decoration: line-through;
 }
 
-/* Marker shares the index cell but offsets into the gutter via
-   translateX, and stays vertically centered on the title row regardless
-   of the row's overall height. */
-.list-marker {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: center;
-  justify-self: start;
-  width: 28px;
-  height: 3px;
-  background: var(--accent);
-  opacity: 0;
-  transform: translateX(-40px);
-}
-
-.list-row.on .list-marker {
-  opacity: 1;
-}
 
 /* ── Loading placeholder ─────────────────────────────── */
 .loading-state {

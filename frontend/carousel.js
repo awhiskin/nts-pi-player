@@ -893,7 +893,9 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
 
     const scroll = document.createElement("div");
     scroll.className = "list-scroll";
-    scroll.appendChild(spacer());
+
+    const track = document.createElement("div");
+    track.className = "list-track";
 
     cards.forEach((card, i) => {
       const row = document.createElement("div");
@@ -919,14 +921,18 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
         row.appendChild(metaEl);
       }
 
-      const marker = document.createElement("span");
-      marker.className = "list-marker";
-      row.appendChild(marker);
-
-      scroll.appendChild(row);
+      track.appendChild(row);
     });
 
-    scroll.appendChild(spacer());
+    scroll.appendChild(track);
+
+    // Single fixed-position marker pinned at the viewport's vertical
+    // centre. Rows slide under it (via .list-track translateY) so the
+    // focused row is always exactly under the marker — no chase.
+    const marker = document.createElement("span");
+    marker.className = "list-focus-marker";
+    scroll.appendChild(marker);
+
     pageEl.appendChild(scroll);
   }
 
@@ -951,21 +957,18 @@ function applyListFocus(pageEl, cards, focused) {
     row.style.opacity = i === focused ? "1" : String(Math.max(0.18, 0.7 - dist * 0.15));
   });
 
+  // Translate the track so the focused row's TITLE centre lands at
+  // .list-track's origin (the viewport's vertical centre via top: 50%
+  // in CSS). The marker is pinned at that same point — by aligning to
+  // the title rather than the row's geometric centre, the marker
+  // visually pairs with the dominant line and the meta sits beneath.
   const focusedRow = pageEl.querySelector(`.list-row[data-i="${focused}"]`);
-  const scroll = pageEl.querySelector(".list-scroll");
-  if (focusedRow && scroll) {
-    const elRect = scroll.getBoundingClientRect();
-    const itemRect = focusedRow.getBoundingClientRect();
-    const offset =
-      itemRect.top - elRect.top - elRect.height / 2 + itemRect.height / 2;
-    scroll.scrollBy({ top: offset, behavior: "smooth" });
+  const track = pageEl.querySelector(".list-track");
+  if (focusedRow && track) {
+    const name = focusedRow.querySelector(".list-name") || focusedRow;
+    const center = name.offsetTop + name.offsetHeight / 2;
+    track.style.transform = `translateY(${-center}px)`;
   }
-}
-
-function spacer() {
-  const s = document.createElement("div");
-  s.className = "list-spacer";
-  return s;
 }
 
 function renderLoading(el, label) {
