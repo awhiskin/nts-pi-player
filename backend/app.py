@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import nts, resolver, state
-from backend.encoder import EncoderEvent, WebSocketEncoder, make_encoder
+from backend.encoder import EncoderEvent, make_encoder
 from backend.player import Player
 
 LIVE_STREAMS = {
@@ -490,9 +490,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 async def handle_message(ws: WebSocket, msg: dict) -> None:
     msg_type = msg.get("type")
     if msg_type == "encoder":
-        if isinstance(encoder, WebSocketEncoder):
-            event = {k: v for k, v in msg.items() if k != "type"}
-            await encoder.feed(event)
+        # WebSocket-sourced encoder events (keyboard / wheel from any
+        # browser) feed straight into on_encoder_event — same path the
+        # GPIO encoder uses on the Pi. Lets a remote browser drive the
+        # Pi UI alongside the physical encoder; both sources broadcast
+        # to all connected clients so they stay in sync.
+        event = {k: v for k, v in msg.items() if k != "type"}
+        await on_encoder_event(event)
         return
     if msg_type == "request_deck":
         deck_id = msg.get("deck_id")
