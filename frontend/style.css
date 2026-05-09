@@ -218,7 +218,7 @@ body {
 .page-bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.65);
 }
 
 /* ── Now Playing page ────────────────────────────────── */
@@ -396,7 +396,7 @@ body {
 .live-card .bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.65);
 }
 
 .live-card-inner {
@@ -450,7 +450,7 @@ body {
 .list-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.65);
 }
 
 .list-header {
