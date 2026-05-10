@@ -22,7 +22,7 @@ This README covers two things: deploying onto a Pi, and running the dev server o
 | KEY         | 22    | 15            |
 | GND         | —     | 39            |
 
-Default GPIO pins can be overridden without a code edit by setting `NTS_ENCODER_A_PIN` (S1), `NTS_ENCODER_B_PIN` (S2), or `NTS_ENCODER_BUTTON_PIN` (KEY) in the systemd unit's `Environment=` lines.
+Default GPIO pins can be overridden without a code edit by setting `NTS_ENCODER_A_PIN`, `NTS_ENCODER_B_PIN`, or `NTS_ENCODER_BUTTON_PIN` in the systemd unit's `Environment=` lines. If rotation comes out inverted on a different encoder (clockwise registers as counter-clockwise), swap the values of `NTS_ENCODER_A_PIN` and `NTS_ENCODER_B_PIN`.
 
 My encoder has a pin for 5V but seems to work fine using 3V3 pin instead; important as the screen I will be using occupies both 5V pins.
 
