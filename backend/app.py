@@ -519,6 +519,15 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         connections.discard(ws)
 
 
+async def _send_deck(ws: WebSocket, deck_id: Optional[str], offset: int) -> None:
+    try:
+        deck = await asyncio.to_thread(build_deck, deck_id, offset)
+        await ws.send_text(json.dumps({"type": "deck_data", **deck}))
+    except Exception:
+        # WS could have closed mid-fetch; nothing useful to report here.
+        pass
+
+
 async def handle_message(ws: WebSocket, msg: dict) -> None:
     msg_type = msg.get("type")
     if msg_type == "ready":
@@ -537,10 +546,13 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         await on_encoder_event(event)
         return
     if msg_type == "request_deck":
+        # Fire-and-forget — building a deck can stall on yt-dlp/nts.live HTTP
+        # for seconds, and we don't want to block subsequent encoder events on
+        # the same WS. The frontend tolerates out-of-order responses via the
+        # nextOffset check in handleDeckData.
         deck_id = msg.get("deck_id")
         offset = int(msg.get("offset") or 0)
-        deck = await asyncio.to_thread(build_deck, deck_id, offset)
-        await ws.send_text(json.dumps({"type": "deck_data", **deck}))
+        asyncio.create_task(_send_deck(ws, deck_id, offset))
         return
     if msg_type == "play":
         # Fire-and-forget: yt-dlp resolution can take seconds; don't block the

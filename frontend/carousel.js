@@ -838,12 +838,14 @@ function renderDeckPage(entry) {
     renderLoading(pageEl, `LOADING ${deckLabel(entry.deck)}`);
     return;
   }
+  const display = withLoadingMore(cards, deckMeta[entry.deck]);
+  // Cursor stays clamped to real-card indexes — the loading-more
+  // placeholder is decorative and lives at display[cards.length].
   const focused = Math.max(0, Math.min(cards.length - 1, entry.cursor));
   entry.cursor = focused;
   buildOrUpdateList(pageEl, {
     title: deckLabel(entry.deck),
-    subtitle: subtitleForCount(cards),
-    cards,
+    cards: display,
     focused,
   });
 }
@@ -858,23 +860,28 @@ function updateDeckPageFocus() {
     renderDeckPage(entry);
     return;
   }
+  const display = withLoadingMore(cards, deckMeta[entry.deck]);
   buildOrUpdateList(pageEl, {
     title: deckLabel(entry.deck),
-    subtitle: subtitleForCount(cards),
-    cards,
+    cards: display,
     focused: entry.cursor,
   });
+}
+
+// Append a decorative "loading more" row when the deck has further
+// pages. The placeholder sits past the last real card, so when the
+// cursor is on the last episode the user sees a "more coming" cue
+// directly below — without making the placeholder cursor-targetable.
+function withLoadingMore(cards, meta) {
+  if (!meta || !meta.hasMore) return cards;
+  return [...cards, { id: "__loading_more__", kind: "loading-more" }];
 }
 
 function subtitleForPage(page, cards) {
   if (page.id === "moods") return "SELECT A MOOD";
   if (page.id === "mixtapes") return "ALWAYS ON, ALWAYS DIFFERENT";
   if (page.id === "genres") return "SELECT A GENRE";
-  return subtitleForCount(cards);
-}
-
-function subtitleForCount(cards) {
-  return `${cards.length} ITEM${cards.length === 1 ? "" : "S"}`;
+  return "";
 }
 
 function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
@@ -915,8 +922,22 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
 
     cards.forEach((card, i) => {
       const row = document.createElement("div");
-      row.className = "list-row" + (card.kind === "unplayable" ? " unplayable" : "");
+      const extraClass =
+        card.kind === "unplayable" ? " unplayable" :
+        card.kind === "loading-more" ? " loading-more" : "";
+      row.className = "list-row" + extraClass;
       row.dataset.i = String(i);
+
+      if (card.kind === "loading-more") {
+        // Decorative placeholder past the last real card — signals that
+        // more episodes are loading. No number, no meta, just a label.
+        const name = document.createElement("span");
+        name.className = "list-name";
+        name.textContent = "LOADING MORE…";
+        row.appendChild(name);
+        track.appendChild(row);
+        return;
+      }
 
       const { main, meta } = listRowParts(card);
 
@@ -950,11 +971,29 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
     scroll.appendChild(marker);
 
     pageEl.appendChild(scroll);
+
+    // (Re)build the Y-offset cache for this DOM. Cards length / kinds
+    // are baked into the sig, so a cache built here matches the rows
+    // we just appended until the next sig-change rebuild.
+    buildOffsetCache(pageEl, cards);
+    // Force fresh focus paint after a DOM rebuild — no previous window
+    // exists, so applyListFocus should treat it as a first-render.
+    delete pageEl.dataset.lastFocused;
   }
 
   // Update focus highlighting + bg image
   applyListFocus(pageEl, cards, focused);
 }
+
+// Rows outside this distance from the focused row land at the dim
+// floor — the per-row opacity formula caps at 0.18 past dist 4, so
+// touching them on every cursor move is pure DOM thrash on long lists.
+const OPACITY_WINDOW = 4;
+
+// Cumulative Y-offset per row, keyed by pageEl. Populated when the
+// list DOM is (re)built so listTrackOffset becomes O(1) instead of
+// looping 0..focused on every encoder tick.
+const offsetCache = new WeakMap();
 
 function applyListFocus(pageEl, cards, focused) {
   const focusedCard = cards[focused];
@@ -965,31 +1004,58 @@ function applyListFocus(pageEl, cards, focused) {
       : "";
   }
 
-  const rows = pageEl.querySelectorAll(".list-row");
-  rows.forEach((row) => {
-    const i = parseInt(row.dataset.i, 10);
-    const dist = Math.abs(i - focused);
-    row.classList.toggle("on", i === focused);
-    row.style.opacity = i === focused ? "1" : String(Math.max(0.18, 0.7 - dist * 0.15));
-  });
-
-  // Compute translateY from the focused index using the deterministic
-  // row geometry in LIST_GEOM. No DOM reads — measurements taken
-  // mid-transition (when the focus class flips font-size) used to
-  // produce drift; with fixed sizes the math is exact every time.
   const track = pageEl.querySelector(".list-track");
-  if (track) {
-    track.style.transform = `translateY(${listTrackOffset(cards, focused)}px)`;
+  if (!track) return;
+  const rows = track.children;
+
+  // Sliding-window update: clear the previous focus window, then
+  // re-paint the new one. Each window is ~9 rows, so the work is
+  // bounded regardless of list length.
+  const prev = pageEl.dataset.lastFocused;
+  const lastFocused = prev !== undefined ? parseInt(prev, 10) : focused;
+  pageEl.dataset.lastFocused = String(focused);
+
+  const clearMin = Math.max(0, lastFocused - OPACITY_WINDOW);
+  const clearMax = Math.min(rows.length - 1, lastFocused + OPACITY_WINDOW);
+  for (let i = clearMin; i <= clearMax; i++) {
+    const row = rows[i];
+    row.classList.remove("on");
+    row.style.opacity = "";
   }
+
+  const setMin = Math.max(0, focused - OPACITY_WINDOW);
+  const setMax = Math.min(rows.length - 1, focused + OPACITY_WINDOW);
+  for (let i = setMin; i <= setMax; i++) {
+    const row = rows[i];
+    const dist = Math.abs(i - focused);
+    if (i === focused) {
+      row.classList.add("on");
+      row.style.opacity = "1";
+    } else {
+      row.style.opacity = String(Math.max(0.18, 0.7 - dist * 0.15));
+    }
+  }
+
+  // Compute translateY from the cached cumulative-row offsets — no
+  // measurement, no per-tick loop over the list.
+  track.style.transform = `translateY(${listTrackOffset(pageEl, focused)}px)`;
 }
 
-function listTrackOffset(cards, focusedIdx) {
+function buildOffsetCache(pageEl, cards) {
+  const offsets = new Array(cards.length);
   let y = 0;
-  for (let i = 0; i < focusedIdx; i++) {
+  for (let i = 0; i < cards.length; i++) {
+    offsets[i] = y;
     const hasMeta = listRowParts(cards[i]).meta !== "";
     y += hasMeta ? LIST_GEOM.rowHeightWithMeta : LIST_GEOM.rowHeightNoMeta;
   }
-  return -(y + LIST_GEOM.focusedTitleCentre);
+  offsetCache.set(pageEl, offsets);
+}
+
+function listTrackOffset(pageEl, focusedIdx) {
+  const offsets = offsetCache.get(pageEl);
+  if (!offsets || focusedIdx < 0 || focusedIdx >= offsets.length) return 0;
+  return -(offsets[focusedIdx] + LIST_GEOM.focusedTitleCentre);
 }
 
 function renderLoading(el, label) {

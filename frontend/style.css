@@ -536,6 +536,16 @@ body {
   color: var(--paper-dim);
   transition: padding 320ms var(--ease-out), opacity 240ms;
   letter-spacing: -0.02em;
+  /* Default to the dim floor — applyListFocus only sets explicit
+     opacity on rows inside the focus window. Off-window rows would
+     all converge here anyway, so we save the inline-style writes. */
+  opacity: 0.18;
+  /* Off-screen culling: Chromium skips paint+layout work for rows
+     outside the viewport. contain-intrinsic-size 'auto 60px' uses
+     60px as the initial estimate (matches a typical with-meta row);
+     the browser caches the real size on first paint. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 60px;
 }
 
 .list-num {
@@ -594,6 +604,23 @@ body {
 .list-row.unplayable .list-name {
   color: var(--paper-soft);
   text-decoration: line-through;
+}
+
+.list-row.loading-more {
+  /* Decorative — never focused — so no .on variant. Pulses gently to
+     signal that more episodes are on the way. */
+  color: var(--paper-soft);
+  animation: list-loading-pulse 1.4s ease-in-out infinite;
+}
+
+.list-row.loading-more .list-name {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+@keyframes list-loading-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
 }
 
 
