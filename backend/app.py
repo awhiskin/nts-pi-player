@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import nts, resolver, state
+from backend.backlight import BacklightDimmer
 from backend.encoder import EncoderEvent, make_encoder
 from backend.player import Player
 
@@ -30,6 +31,13 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 connections: set[WebSocket] = set()
 player = Player()
 encoder = make_encoder()
+
+
+async def on_screen_dimmed() -> None:
+    await broadcast({"type": "screen_dimmed"})
+
+
+dimmer = BacklightDimmer(on_idle=on_screen_dimmed)
 
 # article path -> soundcloud url, populated as episode decks are built
 _episode_audio: dict[str, str] = {}
@@ -110,10 +118,18 @@ async def broadcast(message: dict) -> None:
 
 
 async def push_now_playing() -> None:
+    # Mirror loading state into the dimmer so the screen doesn't fade while
+    # an episode is resolving/buffering. set_loading is idempotent on
+    # no-change, so calling it on every broadcast is cheap.
+    dimmer.set_loading(now_playing["state"] == "loading")
     await broadcast({"type": "now_playing", **now_playing})
 
 
 async def on_encoder_event(event: EncoderEvent) -> None:
+    # Any encoder source — GPIO, browser keyboard, LAN client — counts as
+    # activity. Keeping the dim gate tied to physical-only meant the UI
+    # would advance under remote input while the screen stayed dark.
+    dimmer.on_activity()
     await broadcast({"type": "encoder", **event})
 
 
@@ -433,6 +449,7 @@ async def lifespan(_app: FastAPI):
     if saved is not None:
         now_playing["volume"] = saved
     await encoder.start(on_encoder_event)
+    await dimmer.start()
     await player.start(on_mpv_event)
     await player.set_volume(now_playing["volume"])
     # Populate the schedule before any websocket can connect, so the first
@@ -448,10 +465,25 @@ async def lifespan(_app: FastAPI):
             await schedule_task
         except asyncio.CancelledError:
             pass
+        await dimmer.shutdown()
         await player.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def no_cache_kiosk_assets(request, call_next):
+    # Kiosk-only app on a local network — caching the index/JS/CSS just
+    # makes iteration painful (Chromium serves stale files until reboot).
+    # The 'no-store' tells the browser to never persist these responses,
+    # so subsequent reloads always fetch fresh from the backend.
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
@@ -489,6 +521,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 async def handle_message(ws: WebSocket, msg: dict) -> None:
     msg_type = msg.get("type")
+    if msg_type == "ready":
+        # Frontend signals it has rendered. One-shot fade-up from the dark
+        # boot state; subsequent "ready" messages (reconnects, extra LAN
+        # clients) are ignored by the dimmer.
+        dimmer.on_kiosk_ready()
+        return
     if msg_type == "encoder":
         # WebSocket-sourced encoder events (keyboard / wheel from any
         # browser) feed straight into on_encoder_event — same path the

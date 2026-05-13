@@ -1,8 +1,6 @@
 const LONG_PRESS_MS = 300;
 const PAGE_PREFETCH_THRESHOLD = 5;
 const VOLUME_STEP = 5;
-const IDLE_RETURN_PLAYING_MS = 20000;
-const IDLE_RETURN_OTHERWISE_MS = 60000;
 const VOLUME_PEEK_MS = 750;
 
 // List-row geometry, sourced from the matching CSS custom properties
@@ -564,8 +562,6 @@ function isInteractive() {
 function updateInteractiveState() {
   const interactive = isInteractive();
   stageEl.classList.toggle("interactive", interactive);
-  if (interactive) armIdleTimer();
-  else clearIdleTimer();
   // Any in-flight volume peek is bound to the previous state — discard
   // on transition so the peek doesn't bleed across mode changes.
   clearVolumePeek();
@@ -1091,6 +1087,9 @@ function send(msg) {
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.addEventListener("open", () => {
+    // Tell the backend the UI is up — triggers the boot-time fade-up of
+    // the backlight from the dark "still booting" state.
+    send({ type: "ready" });
     // Pre-fetch all top-level decks so the carousel pages have data on first scroll.
     for (const page of TOP_PAGES) {
       if (page.deck) {
@@ -1107,6 +1106,13 @@ function connect() {
     }
     if (msg.type === "encoder") handleEncoder(msg);
     else if (msg.type === "deck_data") handleDeckData(msg);
+    else if (msg.type === "screen_dimmed") {
+      // Backend fires this at the end of the first dim stage (before the
+      // screen fully fades out). Doing the snap while the screen is still
+      // partially lit means the UI is already at NP by the time the user
+      // wakes it.
+      if (isInteractive()) goToTopLevel();
+    }
     else if (msg.type === "now_playing") {
       nowPlaying = msg;
       // Refresh NP only if it's the active page or one over — far-off
@@ -1131,29 +1137,6 @@ function handleEncoder(event) {
     click();
   } else if (event.event === "long_press") {
     longPress();
-  }
-  // Re-arm idle timer on every input. updateInteractiveState() (called
-  // from render paths) will clear it again if the input took us back to
-  // PASSIVE; otherwise we tick the new threshold from now.
-  if (isInteractive()) armIdleTimer();
-}
-
-// Auto-return to Now Playing in volume mode after a stretch of no input.
-// Only ticks while INTERACTIVE — cleared on entering PASSIVE.
-let idleTimer = null;
-
-function armIdleTimer() {
-  clearIdleTimer();
-  const ms = nowPlaying.state === "playing"
-    ? IDLE_RETURN_PLAYING_MS
-    : IDLE_RETURN_OTHERWISE_MS;
-  idleTimer = setTimeout(goToTopLevel, ms);
-}
-
-function clearIdleTimer() {
-  if (idleTimer !== null) {
-    clearTimeout(idleTimer);
-    idleTimer = null;
   }
 }
 
