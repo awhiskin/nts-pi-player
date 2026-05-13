@@ -25,16 +25,20 @@ const LIST_GEOM = (() => {
 
 const TOP_PAGES = [
   { id: "now-playing", kind: "now-playing", label: "NOW PLAYING" },
-  { id: "live",        kind: "live",        label: "LIVE",     deck: "live" },
-  { id: "mixtapes",    kind: "list",        label: "MIXTAPES", deck: "mixtapes" },
-  { id: "moods",       kind: "list",        label: "MOODS",    deck: "moods" },
-  { id: "genres",      kind: "list",        label: "GENRES",   deck: "genres" },
+  { id: "live",        kind: "live",        label: "LIVE",      deck: "live" },
+  { id: "mixtapes",    kind: "list",        label: "MIXTAPES",  deck: "mixtapes" },
+  { id: "moods",       kind: "list",        label: "MOODS",     deck: "moods" },
+  { id: "nts-picks",   kind: "list",        label: "NTS PICKS", deck: "nts-picks" },
+  { id: "latest",      kind: "list",        label: "LATEST",    deck: "latest" },
+  { id: "genres",      kind: "list",        label: "GENRES",    deck: "genres" },
 ];
 
 const DECK_LABELS = {
   live: "LIVE",
   mixtapes: "MIXTAPES",
   moods: "MOODS",
+  "nts-picks": "NTS PICKS",
+  latest: "LATEST",
   genres: "GENRES",
 };
 
@@ -881,6 +885,8 @@ function subtitleForPage(page, cards) {
   if (page.id === "moods") return "SELECT A MOOD";
   if (page.id === "mixtapes") return "ALWAYS ON, ALWAYS DIFFERENT";
   if (page.id === "genres") return "SELECT A GENRE";
+  if (page.id === "nts-picks") return "STAFF FAVOURITES";
+  if (page.id === "latest") return "RECENTLY ADDED";
   return "";
 }
 

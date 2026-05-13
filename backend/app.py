@@ -20,6 +20,16 @@ LIVE_STREAMS = {
     "channel-2": "https://stream-relay-geo.ntslive.net/stream2",
 }
 
+# Top-level decks backed by NTS collections endpoints. Keyed by the
+# frontend deck_id; the value is the API slug + whether to paginate.
+# Picks is a curated 12-item set with no metadata.count — pagination
+# would dilute the curation, so we stop after one page. Latest reports
+# total via metadata.resultset.count and we walk it page-by-page.
+COLLECTION_DECKS = {
+    "nts-picks": {"slug": "nts-picks", "paginate": False},
+    "latest":    {"slug": "recently-added", "paginate": True},
+}
+
 PAGE_SIZE = 30
 DEFAULT_VOLUME = 60
 SCHEDULE_REFRESH_INTERVAL = 15 * 60.0  # idle re-fetch cadence (s)
@@ -686,6 +696,9 @@ def build_deck(deck_id: Optional[str], offset: int = 0) -> dict:
         return _build_genre_detail_deck(deck_id[len("genre:"):])
     if deck_id == "moods":
         return _build_moods_deck()
+    if deck_id in COLLECTION_DECKS:
+        cfg = COLLECTION_DECKS[deck_id]
+        return _build_collection_deck(deck_id, cfg["slug"], offset, cfg["paginate"])
     if deck_id and (deck_id.startswith("episodes:genre:") or deck_id.startswith("episodes:mood:")):
         return _build_episodes_deck(deck_id, offset)
     return {"deck_id": deck_id, "cards": [], "error": "unknown deck"}
@@ -750,6 +763,8 @@ def _build_root_deck() -> dict:
             {"id": "enter:live", "label": "Live", "kind": "enter-deck", "deck": "live"},
             {"id": "enter:mixtapes", "label": "Mixtapes", "kind": "enter-deck", "deck": "mixtapes"},
             {"id": "enter:moods", "label": "Moods", "kind": "enter-deck", "deck": "moods"},
+            {"id": "enter:nts-picks", "label": "NTS Picks", "kind": "enter-deck", "deck": "nts-picks"},
+            {"id": "enter:latest", "label": "Latest", "kind": "enter-deck", "deck": "latest"},
             {"id": "enter:genres", "label": "Genres", "kind": "enter-deck", "deck": "genres"},
             _back_to_top_card(),
         ],
@@ -878,6 +893,67 @@ def _build_moods_deck() -> dict:
         })
     cards.append(_back_to_top_card())
     return {"deck_id": "moods", "cards": cards}
+
+
+def _normalize_collection_item(r: dict) -> dict:
+    """Adapt a /collections/{slug} item into the same shape that
+    _episode_card consumes from /search/episodes. Saves us writing
+    a parallel card builder for what's essentially the same row."""
+    show = r.get("show_alias") or ""
+    ep = r.get("episode_alias") or ""
+    path = f"shows/{show}/episodes/{ep}" if show and ep else ""
+    media = r.get("media") or {}
+    broadcast = r.get("broadcast") or ""
+    local_date = broadcast[:10] if broadcast else ""  # YYYY-MM-DD slice
+    return {
+        "article": {"path": path},
+        "title": r.get("name") or "Episode",
+        "local_date": local_date,
+        "location": r.get("location_short") or r.get("location_long") or "",
+        # _episode_artwork looks at medium_large / large keys; map the
+        # collection's background_* fields onto those.
+        "image": {
+            "medium_large": media.get("background_medium_large"),
+            "large": media.get("background_large"),
+        },
+        "audio_sources": r.get("audio_sources") or [],
+    }
+
+
+def _build_collection_deck(deck_id: str, slug: str, offset: int, paginate: bool) -> dict:
+    # API caps page size at 12 regardless of what you request.
+    PAGE = 12
+    try:
+        data = nts.collection(slug, offset=offset)
+    except Exception:
+        data = {"results": []}
+
+    items = data.get("results") or []
+    rs = (data.get("metadata") or {}).get("resultset") or {}
+    total = rs.get("count")
+
+    if not paginate:
+        has_more = False
+    elif total is not None:
+        has_more = (offset + PAGE) < int(total)
+    else:
+        # Fallback when the endpoint doesn't report total: keep going
+        # until we see a short page.
+        has_more = len(items) >= PAGE
+
+    content_cards = [_episode_card(_normalize_collection_item(r)) for r in items]
+
+    if offset == 0:
+        cards = [_back_card(), *content_cards, _back_to_top_card()]
+    else:
+        cards = content_cards
+
+    return {
+        "deck_id": deck_id,
+        "offset": offset,
+        "has_more": has_more,
+        "cards": cards,
+    }
 
 
 def _build_episodes_deck(deck_id: str, offset: int) -> dict:

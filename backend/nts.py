@@ -12,6 +12,7 @@ USER_AGENT = "nts-pi-player/0.1"
 LIVE_TTL = 30.0
 MIXTAPES_TTL = 3600.0
 SEARCH_TTL = 600.0  # 10 minutes — episode lists drift slowly
+COLLECTION_TTL = 600.0  # collections (picks, recently-added) — same cadence
 
 _cache: dict[str, tuple[float, Any]] = {}
 
@@ -82,3 +83,14 @@ def search_episodes(filter_key: str, filter_value: str, offset: int, limit: int)
 def episode(path: str) -> dict:
     """Fetch a single episode by article path like 'shows/<alias>/episodes/<alias>'."""
     return _fetch(path.lstrip("/"))
+
+
+def collection(slug: str, offset: int = 0) -> dict:
+    """Fetch a curated collection (e.g. 'nts-picks', 'recently-added').
+    Server-side page size is fixed at 12, so we don't pass limit."""
+    cache_key = f"collection:{slug}:{offset}"
+    return _cached(
+        cache_key,
+        COLLECTION_TTL,
+        lambda: _fetch(f"collections/{slug}", offset=offset),
+    )
