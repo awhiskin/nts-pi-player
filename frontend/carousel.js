@@ -1,4 +1,4 @@
-const LONG_PRESS_MS = 300;
+const PRESS_HOLD_MS = 500;
 const PAGE_PREFETCH_THRESHOLD = 5;
 const VOLUME_STEP = 5;
 const VOLUME_PEEK_MS = 750;
@@ -64,7 +64,6 @@ function pageVisibleCards(page) {
   return cards;
 }
 
-const stageEl = document.getElementById("stage");
 const screenEl = document.getElementById("screen");
 const chromeLabelEl = document.getElementById("chrome-label");
 const chromeTimeEl = document.getElementById("chrome-time");
@@ -93,7 +92,14 @@ let nowPlaying = {
   volume: 60,
   paused: false,
 };
-let nowPlayingMode = "volume"; // "volume" | "scroll"
+
+// Encoder press state — set true while the button is held past the
+// 500ms threshold. While held, rotate events adjust volume instead of
+// navigating; pressHeldTwisted records whether that happened so we can
+// distinguish release-after-volume (no-op) from release-without-twist
+// (back / return-to-NP).
+let pressHeld = false;
+let pressHeldTwisted = false;
 
 let topMode = false; // true if the current DOM is the top-level carousel
 
@@ -142,13 +148,6 @@ function moveTopCursor(direction) {
   const entry = currentEntry();
   const page = TOP_PAGES[entry.pageIndex];
   const delta = direction === "next" ? 1 : -1;
-
-  // Now-playing: in volume mode, encoder = volume. CW = louder, matching
-  // a physical volume knob.
-  if (page.kind === "now-playing" && nowPlayingMode === "volume") {
-    adjustVolume(delta * VOLUME_STEP);
-    return;
-  }
 
   // For pages with internal items, try to move within first.
   // Channel pages don't scroll — single-card pages, rotation bounces
@@ -206,18 +205,11 @@ function clickTop() {
   const page = TOP_PAGES[entry.pageIndex];
 
   if (page.kind === "now-playing") {
-    if (nowPlayingMode === "volume") {
-      if (nowPlaying.state === "playing") {
-        send({ type: nowPlaying.paused ? "resume" : "pause" });
-      }
-    } else if (nowPlaying.state !== "idle") {
-      // Stopping playback from scroll mode is a "we're done here" signal —
-      // drop back to volume mode (PASSIVE) so the UI returns to its
-      // resting state alongside the audio stop.
-      send({ type: "stop" });
-      nowPlayingMode = "volume";
-      renderTopActivePage();
-      updateInteractiveState();
+    // Click on NP toggles pause/resume when a stream is loaded. Loading,
+    // idle, and error are non-actionable from here — there's nothing to
+    // pause, and stop is now handled by the 15-minute pause-auto-stop.
+    if (nowPlaying.state === "playing" || nowPlaying.paused) {
+      send({ type: nowPlaying.paused ? "resume" : "pause" });
     }
     return;
   }
@@ -281,46 +273,42 @@ function queueForCurrentContext() {
   return cards.filter((c) => c.kind === "play").map((c) => c.id);
 }
 
-function longPress() {
+// Universal "back" gesture: pop one stack level when drilled in, return
+// to Now Playing from any other top page, no-op when already on NP.
+// Fires from release-without-twist of the encoder press.
+function backGesture() {
   const entry = currentEntry();
   if (entry.level === "top") {
     const page = TOP_PAGES[entry.pageIndex];
-    if (page.kind === "now-playing") {
-      nowPlayingMode = nowPlayingMode === "volume" ? "scroll" : "volume";
-      // Entering scroll mode is a strong signal of fresh user attention —
-      // ask the backend to re-fetch the live schedule so subsequent pages
-      // reflect any upstream changes.
-      if (nowPlayingMode === "scroll") send({ type: "refresh_live" });
-      renderTopActivePage();
-      updateInteractiveState();
-      return;
-    }
-    // On any other top-level page: returning to Now Playing implies
-    // exiting INTERACTIVE mode too — same code path the idle timeout
-    // uses, so user-initiated and timed returns behave identically.
+    if (page.kind === "now-playing") return; // already home
     goToTopLevel();
     return;
   }
   // Drilled in: pop to parent. Preserve cursors so the user can quickly
   // back out of an accidental drill-in and resume where they were.
-  stack.pop();
-  render();
+  crossfadeRender(() => {
+    stack.pop();
+  });
 }
 
 function enterDeck(deckId, label) {
   if (label) deckTitles[deckId] = label;
-  stack.push({ level: "deck", deck: deckId, cursor: 0 });
+  // Fire the network request immediately — don't wait for the
+  // transition. If the deck is already cached the new render shows
+  // real content during the crossfade; otherwise it'll show a loading
+  // state which is fine.
   if (!decks[deckId]) {
     send({ type: "request_deck", deck_id: deckId, offset: 0 });
   }
-  render();
+  crossfadeRender(() => {
+    stack.push({ level: "deck", deck: deckId, cursor: 0 });
+  });
 }
 
 function goToTopLevel() {
   const wasOnNp = stack.length === 1 && stack[0].pageIndex === 0;
   stack.length = 1;
   stack[0].pageIndex = 0;
-  nowPlayingMode = "volume";
   resetTopCursors(0);
   // When jumping home from another top page, snap the carousel directly
   // to NP rather than sliding through the intermediate pages. The slide
@@ -338,6 +326,48 @@ function goToTopLevel() {
 // cut between artworks.
 const FADE_OUT_MS = 80 * 2;
 const FADE_IN_MS = 240 * 2;
+
+// Crossfade between renders: take a visual clone of the current
+// screenEl contents, run the mutation + render normally (new content
+// appears at full opacity from frame 0), then layer the clone on top
+// and fade it out. The old content gracefully disappears while the new
+// content fades in via its own per-element animation — both curves
+// overlap, so there's never a frame where the screen is empty.
+//
+// Used for deck push/pop. Top-level page rotation doesn't need this —
+// the .carousel slides via CSS transform and both source and target
+// pages stay mounted.
+const CROSSFADE_MS = 320;
+
+function crossfadeRender(mutator) {
+  const old = screenEl.firstElementChild;
+  if (!old) {
+    mutator();
+    render();
+    return;
+  }
+  // cloneNode copies the visual snapshot — no event handlers, no live
+  // updates. Cheap enough even for a 100-row list (a few ms of deep
+  // copy). The clone is overlay-positioned absolutely above the new
+  // content via z-index. pointer-events:none so it doesn't intercept
+  // any input during the fade.
+  const overlay = old.cloneNode(true);
+  overlay.style.position = "absolute";
+  overlay.style.inset = "0";
+  overlay.style.pointerEvents = "none";
+  overlay.style.zIndex = "10";
+
+  mutator();
+  render();
+
+  screenEl.appendChild(overlay);
+  // Force a layout pass before flipping opacity so the transition has
+  // an initial state to interpolate from.
+  void overlay.offsetHeight;
+  overlay.style.transition = `opacity ${CROSSFADE_MS}ms var(--ease-out)`;
+  overlay.style.opacity = "0";
+  setTimeout(() => overlay.remove(), CROSSFADE_MS + 40);
+}
 
 function snapCarouselToActive() {
   const carousel = screenEl.querySelector(".carousel");
@@ -398,7 +428,6 @@ let volumePeekTimer = null;
 
 function peekVolumeHint() {
   if (!volumePeekEl || !volumePeekFillEl || !volumePeekLabelEl) return;
-  if (isInteractive()) return; // chrome's already busy — leave the user be
   const vol = nowPlaying.volume ?? 60;
   volumePeekFillEl.style.width = `${vol}%`;
   volumePeekLabelEl.textContent = `VOL ${vol}`;
@@ -568,7 +597,6 @@ function updateChrome() {
   }
   if (chromeLabelEl) chromeLabelEl.textContent = label;
   updateSideDots(topIndex);
-  updateInteractiveState();
 }
 
 function updateSideDots(activeIndex) {
@@ -584,25 +612,6 @@ function updateSideDots(activeIndex) {
   for (let i = 0; i < sideDotsEl.children.length; i++) {
     sideDotsEl.children[i].classList.toggle("on", i === activeIndex);
   }
-}
-
-// PASSIVE = Now Playing in volume mode (the resting state). INTERACTIVE
-// covers everything else: NP scroll mode, any other top-level page, and
-// any drilled-in deck. Toggles a single class on #stage; CSS handles the
-// inset gutter + side-dots fade.
-function isInteractive() {
-  if (stack.length > 1) return true;
-  const top = TOP_PAGES[stack[0].pageIndex];
-  if (top.kind !== "now-playing") return true;
-  return nowPlayingMode !== "volume";
-}
-
-function updateInteractiveState() {
-  const interactive = isInteractive();
-  stageEl.classList.toggle("interactive", interactive);
-  // Any in-flight volume peek is bound to the previous state — discard
-  // on transition so the peek doesn't bleed across mode changes.
-  clearVolumePeek();
 }
 
 function updateTopTransform() {
@@ -1243,8 +1252,16 @@ function prefetchArtwork(cards) {
 
 // ── WebSocket ──────────────────────────────────────────────────
 let ws;
-let pressTimer = null;
-let longPressed = false;
+// Enter-key state for the keyboard stub. keydownActive tracks whether
+// Enter is currently down (used to ignore key repeat); holdTimer fires
+// the back event at the 500ms threshold mid-press; keyBackFired records
+// that emission so keyup knows to emit press_end (not a spurious click);
+// keyTwisted records whether any arrow fired during the press so keyup
+// can suppress the click.
+let holdTimer = null;
+let keydownActive = false;
+let keyBackFired = false;
+let keyTwisted = false;
 
 function send(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1282,8 +1299,11 @@ function connect() {
       // Backend fires this at the end of the first dim stage (before the
       // screen fully fades out). Doing the snap while the screen is still
       // partially lit means the UI is already at NP by the time the user
-      // wakes it.
-      if (isInteractive()) goToTopLevel();
+      // wakes it. Skip the snap if we're already at NP top-level.
+      const onNpTop =
+        stack.length === 1 &&
+        TOP_PAGES[stack[0].pageIndex].kind === "now-playing";
+      if (!onNpTop) goToTopLevel();
     }
     else if (msg.type === "now_playing") {
       nowPlaying = msg;
@@ -1302,34 +1322,91 @@ function connect() {
   ws.addEventListener("close", () => setTimeout(connect, 500));
 }
 
+// Watchdog: clear a stale pressHeld if no terminating event (click or
+// press_end) arrives in this many ms. A driver hiccup that drops the
+// release would otherwise leave every subsequent rotate stuck in the
+// volume branch. 30s is well past any plausible user hold — long enough
+// to never interrupt a legitimate twist session, short enough to
+// recover automatically.
+const PRESS_HELD_WATCHDOG_MS = 30000;
+let pressHeldWatchdog = null;
+
+function clearPressHeld() {
+  pressHeld = false;
+  pressHeldTwisted = false;
+  if (pressHeldWatchdog !== null) {
+    clearTimeout(pressHeldWatchdog);
+    pressHeldWatchdog = null;
+  }
+}
+
 function handleEncoder(event) {
   if (event.event === "rotate") {
-    moveCursor(event.direction === "cw" ? "next" : "prev");
+    const direction = event.direction === "cw" ? "next" : "prev";
+    if (pressHeld) {
+      // While the button is held, rotation is the volume modifier —
+      // available from tick one of the press; no 500ms warm-up.
+      pressHeldTwisted = true;
+      const delta = direction === "next" ? 1 : -1;
+      adjustVolume(delta * VOLUME_STEP);
+    } else {
+      moveCursor(direction);
+    }
+  } else if (event.event === "press_start") {
+    pressHeld = true;
+    pressHeldTwisted = false;
+    if (pressHeldWatchdog !== null) clearTimeout(pressHeldWatchdog);
+    pressHeldWatchdog = setTimeout(clearPressHeld, PRESS_HELD_WATCHDOG_MS);
   } else if (event.event === "click") {
+    // Short tap (released before threshold, no twist).
+    clearPressHeld();
     click();
-  } else if (event.event === "long_press") {
-    longPress();
+  } else if (event.event === "back") {
+    // Fired mid-press, when the hold crossed 500ms without any twist.
+    // The encoder is still physically held — keep pressHeld true so a
+    // subsequent twist still adjusts volume from whatever page back
+    // navigated to.
+    backGesture();
+  } else if (event.event === "press_end") {
+    // Press window closed. Back or volume already happened mid-press
+    // (or neither, if the user twisted then stopped before crossing the
+    // threshold). Just release the flag.
+    clearPressHeld();
   }
 }
 
 // ── Keyboard simulation ────────────────────────────────────────
+// Mirrors the GPIO encoder protocol: Enter keydown emits press_start
+// immediately (volume modifier engaged from tick one — no 500ms wait);
+// holding past PRESS_HOLD_MS emits "back" mid-press if no twist has
+// happened. Keyup picks click (no twist, no back fired), or press_end
+// (otherwise — release just closes the window).
+//
+// Escape is a one-shot back shortcut for dev convenience.
 document.addEventListener("keydown", (e) => {
   if (e.repeat && e.key === "Enter") return;
   if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+    if (keydownActive) keyTwisted = true;
     send({ type: "encoder", event: "rotate", direction: "ccw", velocity: 1 });
     e.preventDefault();
   } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+    if (keydownActive) keyTwisted = true;
     send({ type: "encoder", event: "rotate", direction: "cw", velocity: 1 });
     e.preventDefault();
-  } else if (e.key === "Enter" && pressTimer === null) {
-    longPressed = false;
-    pressTimer = setTimeout(() => {
-      longPressed = true;
-      send({ type: "encoder", event: "long_press" });
-    }, LONG_PRESS_MS);
+  } else if (e.key === "Enter" && !keydownActive) {
+    keydownActive = true;
+    keyBackFired = false;
+    keyTwisted = false;
+    send({ type: "encoder", event: "press_start" });
+    holdTimer = setTimeout(() => {
+      if (!keyTwisted) {
+        keyBackFired = true;
+        send({ type: "encoder", event: "back" });
+      }
+    }, PRESS_HOLD_MS);
     e.preventDefault();
   } else if (e.key === "Escape") {
-    send({ type: "encoder", event: "long_press" });
+    send({ type: "encoder", event: "back" });
     e.preventDefault();
   }
 });
@@ -1355,12 +1432,21 @@ document.addEventListener(
 
 document.addEventListener("keyup", (e) => {
   if (e.key === "Enter") {
-    if (pressTimer !== null) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
+    if (holdTimer !== null) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
     }
-    if (!longPressed) send({ type: "encoder", event: "click" });
-    longPressed = false;
+    if (keyTwisted || keyBackFired) {
+      // Press already resolved into volume or back mid-press; release
+      // just closes the window.
+      send({ type: "encoder", event: "press_end" });
+    } else {
+      // Short tap, no twist, hadn't crossed the threshold.
+      send({ type: "encoder", event: "click" });
+    }
+    keydownActive = false;
+    keyBackFired = false;
+    keyTwisted = false;
   }
 });
 

@@ -38,6 +38,10 @@ DEFAULT_VOLUME = 60
 SCHEDULE_REFRESH_INTERVAL = 15 * 60.0  # idle re-fetch cadence (s)
 SCHEDULE_RETRY_INTERVAL = 60.0          # re-fetch sooner after a failure
 EPISODE_BOUNDARY_SLACK = 0.5            # wake just past start_timestamp so the new ep is current
+# A stream left paused this long gets stopped automatically. Replaces the
+# old manual stop gesture (click in scroll mode) — see
+# docs/superpowers/specs/2026-05-13-control-paradigm-flip-design.md.
+PAUSE_AUTO_STOP_SECONDS = 15 * 60.0
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -76,7 +80,12 @@ _queue_index: int = -1
 _schedule: dict[str, list[dict]] = {}
 _schedule_attempted_at: float = 0.0  # monotonic ts of last refresh attempt
 _schedule_succeeded_at: float = 0.0  # monotonic ts of last successful refresh
-_schedule_kick = asyncio.Event()      # set by triggers (play/pause, scroll mode)
+_schedule_kick = asyncio.Event()      # set by triggers (play/pause)
+
+# Pause-auto-stop task. Armed when the stream transitions to paused;
+# cancelled on resume, on a fresh play, on eof, or on explicit stop. If
+# it runs to completion, the player is stopped and now_playing goes idle.
+_pause_auto_stop_task: Optional[asyncio.Task] = None
 
 now_playing: dict = {
     "state": "idle",
@@ -146,6 +155,42 @@ async def on_encoder_event(event: EncoderEvent) -> None:
     await broadcast({"type": "encoder", **event})
 
 
+def _cancel_pause_auto_stop() -> None:
+    """Disarm the pause-auto-stop watchdog. Safe to call when nothing is
+    armed."""
+    global _pause_auto_stop_task
+    if _pause_auto_stop_task is not None and not _pause_auto_stop_task.done():
+        _pause_auto_stop_task.cancel()
+    _pause_auto_stop_task = None
+
+
+def _arm_pause_auto_stop() -> None:
+    """(Re-)arm the watchdog. Cancels any prior arming so a flap of
+    pause→resume→pause doesn't end up with two pending timers racing."""
+    global _pause_auto_stop_task
+    _cancel_pause_auto_stop()
+    _pause_auto_stop_task = asyncio.create_task(_pause_auto_stop_runner())
+
+
+async def _pause_auto_stop_runner() -> None:
+    try:
+        await asyncio.sleep(PAUSE_AUTO_STOP_SECONDS)
+    except asyncio.CancelledError:
+        return
+    # Sanity gate: only fire if we are still in the paused state we were
+    # armed for. The cancellation paths should prevent this from being
+    # false, but the check costs nothing and protects against a missed
+    # cancel.
+    if not now_playing.get("paused"):
+        return
+    try:
+        await player.stop()
+    except Exception:
+        pass
+    _reset_now_playing()
+    await push_now_playing()
+
+
 async def on_mpv_event(event: dict) -> None:
     name = event.get("event")
     if name == "property-change":
@@ -182,15 +227,26 @@ async def on_mpv_event(event: dict) -> None:
             new_paused = bool(data)
             if new_paused != now_playing["paused"]:
                 now_playing["paused"] = new_paused
+                if new_paused:
+                    _arm_pause_auto_stop()
+                else:
+                    _cancel_pause_auto_stop()
                 await push_now_playing()
         return
     if name in ("file-loaded", "playback-restart"):
+        # Watchdog cancellation already happened at the top of
+        # _handle_play, which is the only path that initiates a load.
         if now_playing["state"] != "playing":
             now_playing["state"] = "playing"
             now_playing.pop("error_message", None)
             await push_now_playing()
         return
     if name == "end-file":
+        # No watchdog cancel here on purpose: a live-channel pause is
+        # implemented by stopping mpv, which raises end-file reason=stop
+        # *after* the handler already armed the watchdog. The cancel
+        # paths that actually need to fire (resume / new play / explicit
+        # stop / reset to idle) handle it themselves.
         reason = event.get("reason")
         if reason == "error":
             now_playing["state"] = "error"
@@ -219,6 +275,9 @@ def _advance_queue() -> bool:
 
 def _reset_now_playing() -> None:
     global _current_card_id, _queue, _queue_index
+    # Whatever brought us to idle (eof, explicit stop, auto-stop, error)
+    # supersedes any pending pause watchdog.
+    _cancel_pause_auto_stop()
     now_playing.update({
         "state": "idle",
         "title": "",
@@ -587,8 +646,13 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
         if _is_live_card(_current_card_id):
             await player.stop()
             now_playing["paused"] = True
+            # mpv property-change won't fire for this synthetic pause —
+            # arm the watchdog directly.
+            _arm_pause_auto_stop()
             await push_now_playing()
         else:
+            # Non-live: mpv's pause property flips and the watchdog is
+            # armed inside on_mpv_event's property-change branch.
             await player.pause()
         kick_schedule_refresh()
         return
@@ -597,11 +661,6 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
             asyncio.create_task(_handle_play(_current_card_id))
         else:
             await player.resume()
-        kick_schedule_refresh()
-        return
-    if msg_type == "refresh_live":
-        # Frontend-side trigger (scroll-mode entry, etc.). The schedule
-        # loop will re-fetch and broadcast on its next iteration.
         kick_schedule_refresh()
         return
     if msg_type == "set_volume":
@@ -619,6 +678,11 @@ async def handle_message(ws: WebSocket, msg: dict) -> None:
 
 async def _handle_play(card_id: Optional[str], queue: Optional[list[str]] = None) -> None:
     global _current_card_id, _queue, _queue_index
+    # A new play overrides any prior paused-stream watchdog. Belt-and-
+    # braces with the file-loaded path in on_mpv_event, since loadfile
+    # may take seconds (yt-dlp) and we don't want a 14m59s-old timer
+    # firing mid-load.
+    _cancel_pause_auto_stop()
     _current_card_id = card_id
     if queue is not None:
         # User-initiated play: queue context refreshed.

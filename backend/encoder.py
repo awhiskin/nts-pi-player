@@ -54,8 +54,15 @@ class GPIOEncoder(EncoderInput):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._encoder = None
         self._button = None
-        # Set true when when_held fires; suppresses the click on release.
-        self._was_held = False
+        # _pressed is True between physical press and release.
+        # _twisted records whether any rotate fired during the current
+        # press window — twist-while-pressed means volume.
+        # _back_fired records whether the 500ms hold already emitted a
+        # back event for the current press; suppresses click on release
+        # and prevents double-firing if when_held somehow re-triggers.
+        self._pressed = False
+        self._twisted = False
+        self._back_fired = False
 
     async def start(self, on_event: OnEvent) -> None:
         from gpiozero import Button, RotaryEncoder
@@ -67,23 +74,47 @@ class GPIOEncoder(EncoderInput):
         self._button = Button(self._button_pin, hold_time=self._hold_time)
         self._encoder.when_rotated_clockwise = self._on_cw
         self._encoder.when_rotated_counter_clockwise = self._on_ccw
+        self._button.when_pressed = self._on_pressed
         self._button.when_held = self._on_held
         self._button.when_released = self._on_released
 
     def _on_cw(self) -> None:
+        if self._pressed:
+            self._twisted = True
         self._dispatch({"event": "rotate", "direction": "cw", "velocity": 1})
 
     def _on_ccw(self) -> None:
+        if self._pressed:
+            self._twisted = True
         self._dispatch({"event": "rotate", "direction": "ccw", "velocity": 1})
 
+    def _on_pressed(self) -> None:
+        # Volume becomes available immediately on press — twist while
+        # held = volume, no 500ms wait.
+        self._pressed = True
+        self._twisted = False
+        self._back_fired = False
+        self._dispatch({"event": "press_start"})
+
     def _on_held(self) -> None:
-        self._was_held = True
-        self._dispatch({"event": "long_press"})
+        # 500ms threshold reached: fire the back gesture now (mid-press),
+        # not on release. A prior twist suppresses back — the user is
+        # adjusting volume, not navigating.
+        if not self._twisted and not self._back_fired:
+            self._back_fired = True
+            self._dispatch({"event": "back"})
 
     def _on_released(self) -> None:
-        if not self._was_held:
+        if self._twisted or self._back_fired:
+            # Press already resolved into volume or back. Release just
+            # closes the window so the frontend can drop pressHeld.
+            self._dispatch({"event": "press_end"})
+        else:
+            # Short tap, no twist, never crossed the threshold.
             self._dispatch({"event": "click"})
-        self._was_held = False
+        self._pressed = False
+        self._twisted = False
+        self._back_fired = False
 
     def _dispatch(self, event: EncoderEvent) -> None:
         if self._on_event is None or self._loop is None:

@@ -115,19 +115,14 @@ body {
 }
 
 /* ── Page-indicator dots (chrome bar, horizontal) ────── */
-/* Lives inside .chrome-right, just before the clock. Only visible
-   while the UI is in INTERACTIVE state — see #stage.interactive below. */
+/* Lives inside .chrome-right, just before the clock. Always visible
+   under the always-inset chrome model — no longer mode-gated. */
 .side-dots {
   display: flex;
   flex-direction: row;
   gap: 8px;
   align-items: center;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 320ms var(--ease-out);
-}
-
-#stage.interactive .side-dots {
   opacity: 1;
 }
 
@@ -145,29 +140,18 @@ body {
   background: var(--accent);
 }
 
-/* ── Interactive vs. passive states ───────────────────── */
-/* PASSIVE (Now Playing in volume mode): #screen is full-bleed.
-   INTERACTIVE (everything else): #screen insets by a small uniform
-   gutter on all sides; the top inset clears the chrome bar with a
-   little breathing room. The chrome bar stays full-width across both
-   states. */
+/* ── Inset / rounded-page chrome ───────────────────────── */
+/* #screen sits inside the chrome bar with a small uniform gutter; each
+   page is its own rounded card. Was previously gated behind an
+   .interactive class that toggled with Now-Playing volume vs scroll
+   mode; with that distinction gone, the inset is always on. */
 #screen {
-  transition: inset 640ms var(--ease-out);
-}
-
-/* Top clears the chrome bar; sides + bottom uniform. #screen keeps its
-   default overflow:hidden but is rectangular — rounding lives on each
-   .page below, so cards sliding vertically through #screen during page
-   transitions don't have their straight edges shaved by a curved parent
-   clip. */
-#stage.interactive #screen {
   inset: 48px 12px 12px 12px;
 }
 
-/* Each page becomes its own rounded card in INTERACTIVE mode. .page
-   already has overflow:hidden, so its bg-image / bg-overlay layers are
-   clipped to the rounded shape too. */
-#stage.interactive .page {
+/* .page already has overflow:hidden, so its bg-image / bg-overlay
+   layers are clipped to the rounded shape too. */
+.page {
   border-radius: 20px;
 }
 
@@ -184,6 +168,28 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+/* Fresh-mount fade-in on foreground content. Plays once when the
+   element first appears in the DOM — caught by app boot, deck push,
+   deck pop. Top-level rotation doesn't re-fire because these elements
+   persist across the carousel slide.
+
+   Pairs with the crossfadeRender helper in carousel.js: that helper
+   leaves a visual clone of the outgoing screen overlaid for the same
+   duration so the old content fades out while these inner pieces fade
+   in. No black blank between the two. */
+@keyframes contentFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.np-content,
+.live-card-inner,
+.explore-card,
+.list-header,
+.list-track {
+  animation: contentFadeIn 320ms var(--ease-out);
 }
 
 .page-bg-image {
@@ -447,7 +453,7 @@ body {
   inset: 0;
   background-size: cover;
   background-position: center;
-  filter: grayscale(0.4) contrast(1.1) saturate(0.7) brightness(0.55);
+  filter: grayscale(0.15) contrast(1.05) saturate(0.85) brightness(0.75);
   transition: opacity 480ms, background-image 0s;
 }
 
