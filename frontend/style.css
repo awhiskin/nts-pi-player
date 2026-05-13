@@ -141,18 +141,36 @@ body {
 }
 
 /* ── Inset / rounded-page chrome ───────────────────────── */
-/* #screen sits inside the chrome bar with a small uniform gutter; each
-   page is its own rounded card. Was previously gated behind an
-   .interactive class that toggled with Now-Playing volume vs scroll
-   mode; with that distinction gone, the inset is always on. */
+/* Default: #screen sits inside the chrome bar with a small uniform
+   gutter; each page is a rounded card. NP-passive (the resting state
+   for Now Playing) drops the inset back to full-bleed and squares the
+   page off, via the #stage.np-passive overrides further down. */
 #screen {
   inset: 48px 12px 12px 12px;
+  transition: inset 480ms var(--ease-out);
 }
 
 /* .page already has overflow:hidden, so its bg-image / bg-overlay
    layers are clipped to the rounded shape too. */
 .page {
   border-radius: 20px;
+  transition: border-radius 480ms var(--ease-out);
+}
+
+/* ── NP-passive (resting Now Playing) ──────────────────── */
+/* Click on NP-passive removes this class to enter interactive mode;
+   long-press from interactive puts it back. goToTopLevel from a play
+   click also lands here. The transitions on #screen / .page above
+   carry the visual change. */
+#stage.np-passive #screen {
+  inset: 0;
+}
+#stage.np-passive .page {
+  border-radius: 0;
+}
+#stage.np-passive .side-dots {
+  opacity: 0;
+  transition: opacity 320ms var(--ease-out);
 }
 
 /* ── Page carousel (top-level, vertical) ─────────────── */

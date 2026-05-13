@@ -64,6 +64,7 @@ function pageVisibleCards(page) {
   return cards;
 }
 
+const stageEl = document.getElementById("stage");
 const screenEl = document.getElementById("screen");
 const chromeLabelEl = document.getElementById("chrome-label");
 const chromeTimeEl = document.getElementById("chrome-time");
@@ -100,6 +101,16 @@ let nowPlaying = {
 // (back / return-to-NP).
 let pressHeld = false;
 let pressHeldTwisted = false;
+
+// Now Playing has two modes:
+//   passive (default) — fullscreen, no chrome dots, rotate = volume
+//     directly (no hold required), click enters interactive mode.
+//   interactive — uniform inset, side dots visible, rotate navigates
+//     between top pages, click pauses/resumes, long-press returns to
+//     passive. Behaves like every other top page in this mode.
+// goToTopLevel resets to passive (the post-play resting state).
+// backGesture-from-elsewhere lands in interactive (preserves momentum).
+let nowPlayingMode = "passive";
 
 let topMode = false; // true if the current DOM is the top-level carousel
 
@@ -148,6 +159,13 @@ function moveTopCursor(direction) {
   const entry = currentEntry();
   const page = TOP_PAGES[entry.pageIndex];
   const delta = direction === "next" ? 1 : -1;
+
+  // NP-passive: bare rotate IS the volume gesture — no hold required.
+  // CW = louder, matching a physical volume knob.
+  if (page.kind === "now-playing" && nowPlayingMode === "passive") {
+    adjustVolume(delta * VOLUME_STEP);
+    return;
+  }
 
   // For pages with internal items, try to move within first.
   // Channel pages don't scroll — single-card pages, rotation bounces
@@ -205,12 +223,12 @@ function clickTop() {
   const page = TOP_PAGES[entry.pageIndex];
 
   if (page.kind === "now-playing") {
-    // Click on NP toggles pause/resume when a stream is loaded. Loading,
-    // idle, and error are non-actionable from here — there's nothing to
-    // pause, and stop is now handled by the 15-minute pause-auto-stop.
-    if (nowPlaying.state === "playing" || nowPlaying.paused) {
-      send({ type: nowPlaying.paused ? "resume" : "pause" });
-    }
+    // Click on NP toggles the mode in either direction — passive →
+    // interactive (inset + dots fade in) and back. Pause/resume lives
+    // on long-press so the two gestures don't compete.
+    nowPlayingMode =
+      nowPlayingMode === "interactive" ? "passive" : "interactive";
+    updateChrome();
     return;
   }
 
@@ -273,15 +291,26 @@ function queueForCurrentContext() {
   return cards.filter((c) => c.kind === "play").map((c) => c.id);
 }
 
-// Universal "back" gesture: pop one stack level when drilled in, return
-// to Now Playing from any other top page, no-op when already on NP.
+// Long-press gesture. Universal "back" everywhere except on NP, where
+// it's repurposed to pause/resume (click owns the mode toggle there).
 // Fires from release-without-twist of the encoder press.
 function backGesture() {
   const entry = currentEntry();
   if (entry.level === "top") {
     const page = TOP_PAGES[entry.pageIndex];
-    if (page.kind === "now-playing") return; // already home
-    goToTopLevel();
+    if (page.kind === "now-playing") {
+      // Pause/resume the loaded stream. Loading, idle, and error
+      // states are non-actionable — there's nothing to pause, and
+      // explicit stop is now handled by the 15-minute pause-auto-stop.
+      if (nowPlaying.state === "playing" || nowPlaying.paused) {
+        send({ type: nowPlaying.paused ? "resume" : "pause" });
+      }
+      return;
+    }
+    // Non-NP top page: jump home. Land in interactive so the user can
+    // keep navigating without an extra click; one click on
+    // NP-interactive then relaxes to NP-passive.
+    goToTopLevel({ targetMode: "interactive" });
     return;
   }
   // Drilled in: pop to parent. Preserve cursors so the user can quickly
@@ -305,10 +334,16 @@ function enterDeck(deckId, label) {
   });
 }
 
-function goToTopLevel() {
+// targetMode: "passive" | "interactive". Default passive — used by the
+// play-an-item path (triggerCard → goToTopLevel) where landing on a
+// resting view feels right. The long-press back path passes
+// "interactive" so the user keeps momentum and can navigate again
+// without an extra click.
+function goToTopLevel({ targetMode = "passive" } = {}) {
   const wasOnNp = stack.length === 1 && stack[0].pageIndex === 0;
   stack.length = 1;
   stack[0].pageIndex = 0;
+  nowPlayingMode = targetMode;
   resetTopCursors(0);
   // When jumping home from another top page, snap the carousel directly
   // to NP rather than sliding through the intermediate pages. The slide
@@ -597,6 +632,21 @@ function updateChrome() {
   }
   if (chromeLabelEl) chromeLabelEl.textContent = label;
   updateSideDots(topIndex);
+  applyNpPassiveChrome();
+}
+
+// Toggle the .np-passive class on #stage. Active only when we're on
+// NP top-level AND mode is passive — every other state (NP-interactive,
+// any non-NP page, any drilled-in deck) gets the default insetted look.
+// CSS handles the inset / border-radius / side-dot opacity off this
+// single class.
+function applyNpPassiveChrome() {
+  const entry = currentEntry();
+  const onNpTop =
+    entry.level === "top" &&
+    TOP_PAGES[entry.pageIndex].kind === "now-playing";
+  const passive = onNpTop && nowPlayingMode === "passive";
+  stageEl.classList.toggle("np-passive", passive);
 }
 
 function updateSideDots(activeIndex) {
