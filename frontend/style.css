@@ -439,6 +439,19 @@ body {
   overflow: hidden;
 }
 
+/* Tiled NTS wordmark backdrop for list pages — sits behind
+   .list-bg-image so when a focused card has no artwork (genres
+   top-level, genre detail subgenre lists), the pattern shows
+   through. Same asset and styling as the Now Playing idle bg. */
+.list-bg-idle {
+  position: absolute;
+  inset: 0;
+  background-color: var(--ink-soft);
+  background-image: url("/static/idle-pattern.svg");
+  background-repeat: repeat;
+  background-size: 180px 180px;
+}
+
 .list-bg-image {
   position: absolute;
   inset: 0;

@@ -814,7 +814,14 @@ def _build_genres_deck() -> dict:
         data = nts.genres()
     except Exception:
         data = {"results": []}
-    for g in data.get("results", []):
+    # NTS returns genres in numeric id order; sort by name so the
+    # top-level reads alphabetically (matching the subgenre lists,
+    # which the API already returns alphabetised).
+    genres = sorted(
+        data.get("results", []),
+        key=lambda g: (g.get("name") or "").lower(),
+    )
+    for g in genres:
         gid = g.get("id") or ""
         cards.append({
             "id": f"enter:genre:{gid}",

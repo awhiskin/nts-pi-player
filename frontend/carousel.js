@@ -892,6 +892,13 @@ function buildOrUpdateList(pageEl, { title, subtitle, cards, focused }) {
     pageEl.dataset.listSig = sig;
     pageEl.innerHTML = "";
 
+    // Tiled NTS pattern, always present. When .list-bg-image has no
+    // URL (cards without artwork — genres top-level, genre detail),
+    // the transparent layer above lets this pattern show through.
+    const idle = document.createElement("div");
+    idle.className = "list-bg-idle";
+    pageEl.appendChild(idle);
+
     const bg = document.createElement("div");
     bg.className = "bg-image list-bg-image";
     pageEl.appendChild(bg);
