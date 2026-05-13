@@ -26,8 +26,11 @@ LIVE_STREAMS = {
 # would dilute the curation, so we stop after one page. Latest reports
 # total via metadata.resultset.count and we walk it page-by-page.
 COLLECTION_DECKS = {
-    "nts-picks": {"slug": "nts-picks", "paginate": False},
-    "latest":    {"slug": "recently-added", "paginate": True},
+    "nts-picks": {"slug": "nts-picks",       "paginate": False, "max_items": None},
+    # LATEST has tens of thousands of items in the API — capping at 120
+    # (~10 server-pages) keeps the deck navigable. Past that the user
+    # should reach for a more specific filter (mood/genre).
+    "latest":    {"slug": "recently-added",  "paginate": True,  "max_items": 120},
 }
 
 PAGE_SIZE = 30
@@ -696,9 +699,13 @@ def build_deck(deck_id: Optional[str], offset: int = 0) -> dict:
         return _build_genre_detail_deck(deck_id[len("genre:"):])
     if deck_id == "moods":
         return _build_moods_deck()
+    if deck_id == "explore":
+        return _build_explore_deck()
     if deck_id in COLLECTION_DECKS:
         cfg = COLLECTION_DECKS[deck_id]
-        return _build_collection_deck(deck_id, cfg["slug"], offset, cfg["paginate"])
+        return _build_collection_deck(
+            deck_id, cfg["slug"], offset, cfg["paginate"], cfg["max_items"]
+        )
     if deck_id and (deck_id.startswith("episodes:genre:") or deck_id.startswith("episodes:mood:")):
         return _build_episodes_deck(deck_id, offset)
     return {"deck_id": deck_id, "cards": [], "error": "unknown deck"}
@@ -760,13 +767,65 @@ def _build_root_deck() -> dict:
         "deck_id": "root",
         "cards": [
             {"id": "now-playing", "label": "Now Playing", "kind": "now-playing"},
-            {"id": "enter:live", "label": "Live", "kind": "enter-deck", "deck": "live"},
-            {"id": "enter:mixtapes", "label": "Mixtapes", "kind": "enter-deck", "deck": "mixtapes"},
-            {"id": "enter:moods", "label": "Moods", "kind": "enter-deck", "deck": "moods"},
-            {"id": "enter:nts-picks", "label": "NTS Picks", "kind": "enter-deck", "deck": "nts-picks"},
-            {"id": "enter:latest", "label": "Latest", "kind": "enter-deck", "deck": "latest"},
-            {"id": "enter:genres", "label": "Genres", "kind": "enter-deck", "deck": "genres"},
+            {"id": "channel-1", "label": "Channel 1", "kind": "play"},
+            {"id": "channel-2", "label": "Channel 2", "kind": "play"},
+            {"id": "enter:explore", "label": "Explore", "kind": "enter-deck", "deck": "explore"},
             _back_to_top_card(),
+        ],
+    }
+
+
+def _build_explore_deck() -> dict:
+    """Top-level grouping page for everything that isn't a live channel
+    or the now-playing display: mixtapes, moods, picks, latest, genres.
+
+    Each card carries a representative artwork URL pulled from its target
+    deck — gives the EXPLORE banners distinct backgrounds. nts.* calls
+    are cached upstream so the cost is amortised. Genres carry no artwork
+    (NTS doesn't surface one); the frontend falls back to the tiled NTS
+    pattern in that case."""
+
+    def _first_with_art(cards: list[dict]) -> Optional[str]:
+        for c in cards:
+            if c.get("artwork"):
+                return c["artwork"]
+        return None
+
+    try:
+        mixtapes_art = _first_with_art(_build_mixtape_cards())
+    except Exception:
+        mixtapes_art = None
+    try:
+        picks = _build_collection_deck("nts-picks", "nts-picks", 0, False, None)
+        picks_art = _first_with_art(picks.get("cards", []))
+    except Exception:
+        picks_art = None
+    try:
+        latest = _build_collection_deck("latest", "recently-added", 0, True, 120)
+        latest_art = _first_with_art(latest.get("cards", []))
+    except Exception:
+        latest_art = None
+    try:
+        moods_results = nts.moods().get("results", [])
+        moods_art = next(
+            (
+                (m.get("image") or {}).get("medium_large")
+                or (m.get("image") or {}).get("large")
+                for m in moods_results
+                if m.get("image")
+            ),
+            None,
+        )
+    except Exception:
+        moods_art = None
+
+    return {
+        "deck_id": "explore",
+        "cards": [
+            {"id": "enter:mixtapes",  "label": "Mixtapes",  "subtitle": "Always on, always different", "kind": "enter-deck", "deck": "mixtapes",  "artwork": mixtapes_art},
+            {"id": "enter:moods",     "label": "Moods",     "subtitle": "Set the tone",                "kind": "enter-deck", "deck": "moods",     "artwork": moods_art},
+            {"id": "enter:nts-picks", "label": "NTS Picks", "subtitle": "Staff favourites",            "kind": "enter-deck", "deck": "nts-picks", "artwork": picks_art},
+            {"id": "enter:latest",    "label": "Latest",    "subtitle": "Recently added",              "kind": "enter-deck", "deck": "latest",    "artwork": latest_art},
         ],
     }
 
@@ -920,7 +979,9 @@ def _normalize_collection_item(r: dict) -> dict:
     }
 
 
-def _build_collection_deck(deck_id: str, slug: str, offset: int, paginate: bool) -> dict:
+def _build_collection_deck(
+    deck_id: str, slug: str, offset: int, paginate: bool, max_items: Optional[int]
+) -> dict:
     # API caps page size at 12 regardless of what you request.
     PAGE = 12
     try:
@@ -933,6 +994,11 @@ def _build_collection_deck(deck_id: str, slug: str, offset: int, paginate: bool)
     total = rs.get("count")
 
     if not paginate:
+        has_more = False
+    elif max_items is not None and (offset + PAGE) >= max_items:
+        # Local cap on otherwise-unbounded collections (e.g. recently-added
+        # has tens of thousands of items). Past this point further pagination
+        # would just push the user past anything meaningfully "recent".
         has_more = False
     elif total is not None:
         has_more = (offset + PAGE) < int(total)

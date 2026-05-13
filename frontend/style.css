@@ -171,17 +171,6 @@ body {
   border-radius: 20px;
 }
 
-/* The two live cards stack into a single rounded shape — top card gets
-   the top corners, bottom card gets the bottom. .live-card has
-   overflow:hidden so the bg-image children clip to the rounded edge. */
-.live-grid .live-card:first-child {
-  border-radius: 20px 20px 0 0;
-}
-
-.live-grid .live-card:last-child {
-  border-radius: 0 0 20px 20px;
-}
-
 /* ── Page carousel (top-level, vertical) ─────────────── */
 .carousel {
   position: absolute;
@@ -362,14 +351,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* ── Live page (2 channels stacked) ─────────────────── */
-.live-grid {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-}
-
+/* ── Live channel cards (CHANNEL 1 / CHANNEL 2 top pages) ─── */
 .live-card {
   position: relative;
   overflow: hidden;
@@ -379,6 +361,14 @@ body {
 
 .live-card.on {
   filter: brightness(1) saturate(1);
+}
+
+/* A channel rendered as its own top-level page fills its .page
+   container. .on is always set on these (single-card pages have
+   nothing to dim against). */
+.live-card.standalone {
+  position: absolute;
+  inset: 0;
 }
 
 .live-card .bg-image {
@@ -617,6 +607,96 @@ body {
 .list-row.unplayable .list-name {
   color: var(--paper-soft);
   text-decoration: line-through;
+}
+
+/* ── EXPLORE: stacked banner cards ─────────────────── */
+/* Two banners per EXPLORE page — mirrors the old LIVE grid pattern.
+   Focused banner brightens; non-focused dim like the channel cards
+   used to. */
+.explore-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+}
+
+.explore-card {
+  position: relative;
+  overflow: hidden;
+  transition: filter 320ms;
+  filter: brightness(0.55) saturate(0.7);
+  /* No-art fallback: each card paints the tiled NTS pattern as its
+     own background. The .bg-image child sits on top — when its url()
+     is empty, the pattern shows through. */
+  background-color: var(--ink-soft);
+  background-image: url("/static/idle-pattern.svg");
+  background-repeat: repeat;
+  background-size: 160px 160px;
+}
+
+.explore-card.on {
+  filter: brightness(1) saturate(1);
+}
+
+.explore-card .bg-image {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: grayscale(0.15) contrast(1.05) saturate(0.85);
+  transition: transform 800ms;
+}
+
+.explore-card.on .bg-image {
+  transform: scale(1.03);
+}
+
+.explore-card .bg-overlay {
+  position: absolute;
+  inset: 0;
+  /* Heavier scrim on no-art cards so the pattern doesn't fight the
+     title; .has-art swaps to a lighter scrim once a photo's behind. */
+  background: rgba(0, 0, 0, 0.6);
+  transition: background 320ms;
+}
+
+.explore-card-inner {
+  position: absolute;
+  inset: 0;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.explore-card-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 52px;
+  text-transform: uppercase;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--paper);
+  transition: font-size 320ms var(--ease-out), letter-spacing 320ms var(--ease-out);
+}
+
+.explore-card.on .explore-card-name {
+  font-size: 64px;
+  letter-spacing: -0.05em;
+}
+
+/* Matches the .np-sub vocabulary used on Now Playing + Channel
+   cards: display font, weight 600, tight tracking, paper-dim.
+   Don't switch to accent on focus — the brightness/saturate filter
+   on the parent card already lifts it next to the dim siblings. */
+.explore-card-sub {
+  margin-top: 10px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(14px, 2.4vmin, 18px);
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: var(--paper-strong);
 }
 
 .list-row.loading-more {

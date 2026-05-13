@@ -3,12 +3,12 @@ const PAGE_PREFETCH_THRESHOLD = 5;
 const VOLUME_STEP = 5;
 const VOLUME_PEEK_MS = 750;
 
-// List-row geometry, sourced from the matching CSS custom properties
-// in :root. Read once at module load — the kiosk doesn't resize and
-// the values are static — so we never have to measure rows in the DOM
-// to know where the .list-track should be translated.
-const LIST_GEOM = (() => {
-  const cs = getComputedStyle(document.documentElement);
+// List-row geometry, sourced from the matching CSS custom properties.
+// Read from a specific element so per-page overrides (e.g. the EXPLORE
+// "hero list" treatment) cascade through and the .list-track translate
+// math stays accurate without DOM measurement.
+function listGeomFrom(el) {
+  const cs = getComputedStyle(el);
   const px = (name) => parseFloat(cs.getPropertyValue(name));
   const padY = px("--list-row-pad-y");
   const padYOn = px("--list-row-pad-y-on");
@@ -21,15 +21,25 @@ const LIST_GEOM = (() => {
     rowHeightNoMeta: padY * 2 + titleH,
     focusedTitleCentre: padYOn + titleHOn / 2,
   };
-})();
+}
+// Default :root geometry — used for the few places that don't have a
+// pageEl context (e.g. one-off measurements at module load).
+const LIST_GEOM = listGeomFrom(document.documentElement);
 
 const TOP_PAGES = [
   { id: "now-playing", kind: "now-playing", label: "NOW PLAYING" },
-  { id: "live",        kind: "live",        label: "LIVE",      deck: "live" },
-  { id: "mixtapes",    kind: "list",        label: "MIXTAPES",  deck: "mixtapes" },
-  { id: "moods",       kind: "list",        label: "MOODS",     deck: "moods" },
-  { id: "nts-picks",   kind: "list",        label: "NTS PICKS", deck: "nts-picks" },
-  { id: "latest",      kind: "list",        label: "LATEST",    deck: "latest" },
+  // CHANNEL 1 and CHANNEL 2 share the live deck; each renders just
+  // its own channel full-page via channelId.
+  { id: "channel-1",   kind: "channel",     label: "CHANNEL 1", deck: "live", channelId: "channel-1" },
+  { id: "channel-2",   kind: "channel",     label: "CHANNEL 2", deck: "live", channelId: "channel-2" },
+  // EXPLORE is split across two pages of two banner cards each.
+  // Both read from the single backend "explore" deck and slice into
+  // it via [start, end) so server-side stays simple.
+  { id: "explore-1",   kind: "explore",     label: "EXPLORE",   deck: "explore", slice: [0, 2] },
+  { id: "explore-2",   kind: "explore",     label: "EXPLORE",   deck: "explore", slice: [2, 4] },
+  // GENRES at the top level is a flat list (drill-in to specific
+  // genres). It paginates differently from a banner page would, and
+  // 35+ genres can't fit as banners anyway.
   { id: "genres",      kind: "list",        label: "GENRES",    deck: "genres" },
 ];
 
@@ -40,7 +50,19 @@ const DECK_LABELS = {
   "nts-picks": "NTS PICKS",
   latest: "LATEST",
   genres: "GENRES",
+  explore: "EXPLORE",
 };
+
+// Cards visible on a specific top page — applies any slice the page
+// declares, so an "explore" page only sees its own two of the four
+// shared explore-deck cards. Generic helper rather than per-call
+// slicing to keep moveTopCursor / clickTop / render in sync.
+function pageVisibleCards(page) {
+  const cards = visibleCards(page.deck);
+  if (!cards) return null;
+  if (page.slice) return cards.slice(page.slice[0], page.slice[1]);
+  return cards;
+}
 
 const stageEl = document.getElementById("stage");
 const screenEl = document.getElementById("screen");
@@ -129,8 +151,10 @@ function moveTopCursor(direction) {
   }
 
   // For pages with internal items, try to move within first.
-  if (page.kind === "list" || page.kind === "live") {
-    const items = visibleCards(page.deck);
+  // Channel pages don't scroll — single-card pages, rotation bounces
+  // straight to the next/prev top page.
+  if (page.kind === "list" || page.kind === "explore") {
+    const items = pageVisibleCards(page);
     if (items && items.length) {
       const cur = entry.itemCursors[page.id] ?? 0;
       const next = cur + delta;
@@ -198,7 +222,17 @@ function clickTop() {
     return;
   }
 
-  const items = visibleCards(page.deck);
+  if (page.kind === "channel") {
+    // Play the specific channel this page is bound to. The live
+    // deck holds the data; we delegate to triggerCard so the
+    // already-playing short-circuit (same-as-current) applies.
+    const cards = visibleCards("live") || [];
+    const target = cards.find((c) => c.id === page.channelId);
+    if (target) triggerCard(target);
+    return;
+  }
+
+  const items = pageVisibleCards(page);
   if (!items || !items.length) return;
   const cur = entry.itemCursors[page.id] ?? 0;
   triggerCard(items[cur]);
@@ -596,11 +630,31 @@ function renderTopPageContent(page, isActive) {
   if (!pageEl) return;
   if (page.kind === "now-playing") {
     renderNowPlayingPage(pageEl);
-  } else if (page.kind === "live") {
-    renderLivePage(pageEl, isActive);
+  } else if (page.kind === "channel") {
+    renderChannelPage(pageEl, page);
+  } else if (page.kind === "explore") {
+    renderExplorePage(pageEl, page);
   } else if (page.kind === "list") {
     renderListPage(pageEl, page);
   }
+}
+
+// ── Channel page (single live channel, full-bleed) ─────────────
+// Each CHANNEL N top page binds to one card in the shared live
+// deck and renders just that card full-page. Reuses the live-card
+// scaffold/update helpers below so episode rollovers repaint in
+// place.
+function renderChannelPage(pageEl, page) {
+  if (pageEl.dataset.channelBuilt !== "1") {
+    pageEl.dataset.channelBuilt = "1";
+    pageEl.innerHTML = "";
+    const card = buildLiveCardScaffold(0);
+    card.classList.add("standalone", "on");
+    pageEl.appendChild(card);
+  }
+  const cards = visibleCards("live") || [];
+  const data = cards.find((c) => c.id === page.channelId);
+  if (data) updateLiveCard(pageEl.querySelector(".live-card"), data);
 }
 
 // ── Now Playing ────────────────────────────────────────────────
@@ -724,13 +778,7 @@ function eyebrowText(np) {
   return np.state.toUpperCase();
 }
 
-// ── Live page (2 channels) ─────────────────────────────────────
-function ensureLiveScaffold(pageEl) {
-  if (pageEl.dataset.liveBuilt === "1") return;
-  pageEl.dataset.liveBuilt = "1";
-  pageEl.innerHTML = `<div class="live-grid"></div>`;
-}
-
+// ── Live-card primitives ──────────────────────────────────────
 // Live cards mirror the Now Playing scaffold (eyebrow + show + sub),
 // scaled down and bottom-left aligned via CSS — same vocabulary, same
 // classes. Build the empty shell once per channel, then update content
@@ -777,43 +825,7 @@ function updateLiveCard(cardEl, card) {
   );
 }
 
-function renderLivePage(pageEl, isActive) {
-  ensureLiveScaffold(pageEl);
-  const grid = pageEl.querySelector(".live-grid");
-  const cards = visibleCards("live");
-
-  if (!cards) {
-    if (grid.dataset.liveSig !== "loading") {
-      grid.dataset.liveSig = "loading";
-      grid.innerHTML = "";
-      const loader = document.createElement("div");
-      loader.className = "loading-state";
-      loader.innerHTML = `<div class="spinner"></div><div class="loading-label">LOADING LIVE</div>`;
-      grid.appendChild(loader);
-    }
-    return;
-  }
-
-  // Build scaffolds only when the channel set changes; thereafter just
-  // update content. Keeps DOM stable across episode-rollover broadcasts.
-  const sig = cards.map((c) => c.id).join("|");
-  if (grid.dataset.liveSig !== sig) {
-    grid.dataset.liveSig = sig;
-    grid.innerHTML = "";
-    cards.forEach((_, i) => grid.appendChild(buildLiveCardScaffold(i)));
-  }
-  cards.forEach((card, i) => updateLiveCard(grid.children[i], card));
-
-  // Update focus highlighting in place.
-  const entry = currentEntry();
-  const focused = entry.level === "top" ? (entry.itemCursors.live ?? 0) : 0;
-  grid.querySelectorAll(".live-card").forEach((cardEl) => {
-    const i = parseInt(cardEl.dataset.i, 10);
-    cardEl.classList.toggle("on", i === focused && isActive);
-  });
-}
-
-// ── List page (top-level Moods/Mixtapes/Genres OR drilled deck) ─
+// ── List page (top-level GENRES or any drilled-in deck) ───────
 function renderListPage(pageEl, page) {
   const cards = visibleCards(page.deck);
   if (!cards) {
@@ -827,6 +839,81 @@ function renderListPage(pageEl, page) {
     subtitle: subtitleForPage(page, cards),
     cards,
     focused,
+  });
+}
+
+// ── Explore page (banner cards, like the old LIVE grid) ───────
+function ensureExploreScaffold(pageEl) {
+  if (pageEl.dataset.exploreBuilt === "1") return;
+  pageEl.dataset.exploreBuilt = "1";
+  pageEl.innerHTML = `<div class="explore-grid"></div>`;
+}
+
+function buildExploreCardScaffold(index) {
+  const cardEl = document.createElement("div");
+  cardEl.className = "explore-card";
+  cardEl.dataset.i = String(index);
+  cardEl.innerHTML = `
+    <div class="bg-image"></div>
+    <div class="bg-overlay"></div>
+    <div class="explore-card-inner">
+      <span class="explore-card-name"></span>
+      <span class="explore-card-sub"></span>
+    </div>
+  `;
+  return cardEl;
+}
+
+function updateExploreCard(cardEl, card) {
+  const bg = cardEl.querySelector(".bg-image");
+  const desired = card.artwork ? `url("${card.artwork}")` : "";
+  if (bg.style.backgroundImage !== desired) bg.style.backgroundImage = desired;
+  // No-art cards expose the .explore-card's own tiled pattern bg via
+  // a class toggle that adjusts the overlay weight.
+  cardEl.classList.toggle("has-art", !!card.artwork);
+
+  const name = cardEl.querySelector(".explore-card-name");
+  const label = (card.label || "").toUpperCase();
+  if (name.textContent !== label) name.textContent = label;
+
+  const sub = cardEl.querySelector(".explore-card-sub");
+  const subText = (card.subtitle || "").toUpperCase();
+  if (sub.textContent !== subText) sub.textContent = subText;
+  sub.hidden = !subText;
+}
+
+function renderExplorePage(pageEl, page) {
+  ensureExploreScaffold(pageEl);
+  const grid = pageEl.querySelector(".explore-grid");
+  const cards = pageVisibleCards(page);
+
+  if (!cards) {
+    if (grid.dataset.sig !== "loading") {
+      grid.dataset.sig = "loading";
+      grid.innerHTML = "";
+      const loader = document.createElement("div");
+      loader.className = "loading-state";
+      loader.innerHTML = `<div class="spinner"></div><div class="loading-label">LOADING</div>`;
+      grid.appendChild(loader);
+    }
+    return;
+  }
+
+  // Sig keys per-page so swapping between explore-1 and explore-2
+  // (same deck, different slice) triggers a fresh scaffold.
+  const sig = `${page.id}|${cards.map((c) => c.id).join("|")}`;
+  if (grid.dataset.sig !== sig) {
+    grid.dataset.sig = sig;
+    grid.innerHTML = "";
+    cards.forEach((_, i) => grid.appendChild(buildExploreCardScaffold(i)));
+  }
+  cards.forEach((card, i) => updateExploreCard(grid.children[i], card));
+
+  const entry = currentEntry();
+  const focused = entry.level === "top" ? (entry.itemCursors[page.id] ?? 0) : 0;
+  Array.from(grid.children).forEach((cardEl) => {
+    const i = parseInt(cardEl.dataset.i, 10);
+    cardEl.classList.toggle("on", i === focused);
   });
 }
 
@@ -882,11 +969,7 @@ function withLoadingMore(cards, meta) {
 }
 
 function subtitleForPage(page, cards) {
-  if (page.id === "moods") return "SELECT A MOOD";
-  if (page.id === "mixtapes") return "ALWAYS ON, ALWAYS DIFFERENT";
   if (page.id === "genres") return "SELECT A GENRE";
-  if (page.id === "nts-picks") return "STAFF FAVOURITES";
-  if (page.id === "latest") return "RECENTLY ADDED";
   return "";
 }
 
@@ -1055,20 +1138,25 @@ function applyListFocus(pageEl, cards, focused) {
 }
 
 function buildOffsetCache(pageEl, cards) {
+  // Pull CSS-var geometry from the pageEl so any page-specific overrides
+  // (e.g. .list-page.hero-list) flow through here too.
+  const geom = listGeomFrom(pageEl);
   const offsets = new Array(cards.length);
   let y = 0;
   for (let i = 0; i < cards.length; i++) {
     offsets[i] = y;
     const hasMeta = listRowParts(cards[i]).meta !== "";
-    y += hasMeta ? LIST_GEOM.rowHeightWithMeta : LIST_GEOM.rowHeightNoMeta;
+    y += hasMeta ? geom.rowHeightWithMeta : geom.rowHeightNoMeta;
   }
-  offsetCache.set(pageEl, offsets);
+  offsetCache.set(pageEl, { offsets, geom });
 }
 
 function listTrackOffset(pageEl, focusedIdx) {
-  const offsets = offsetCache.get(pageEl);
-  if (!offsets || focusedIdx < 0 || focusedIdx >= offsets.length) return 0;
-  return -(offsets[focusedIdx] + LIST_GEOM.focusedTitleCentre);
+  const entry = offsetCache.get(pageEl);
+  if (!entry) return 0;
+  const { offsets, geom } = entry;
+  if (focusedIdx < 0 || focusedIdx >= offsets.length) return 0;
+  return -(offsets[focusedIdx] + geom.focusedTitleCentre);
 }
 
 function renderLoading(el, label) {
@@ -1115,15 +1203,16 @@ function handleDeckData(msg) {
   }
   prefetchArtwork(cards);
 
-  // Re-render whichever surface is showing this deck. Off-neighbourhood
-  // top pages stay deferred — the next render-neighbourhood pass picks
-  // them up from the deck cache when they come into range.
+  // Re-render whichever surface is showing this deck. Multiple top pages
+  // can share a deck (channel-1 and channel-2 both read "live") — render
+  // every match that's inside the active neighbourhood.
   const entry = currentEntry();
   if (entry.level === "top" && topMode) {
-    const i = TOP_PAGES.findIndex((p) => p.deck === deckId);
-    if (i !== -1 && Math.abs(i - entry.pageIndex) <= RENDER_NEIGHBOR_RADIUS) {
-      renderTopPageContent(TOP_PAGES[i], i === entry.pageIndex);
-    }
+    TOP_PAGES.forEach((p, i) => {
+      if (p.deck !== deckId) return;
+      if (Math.abs(i - entry.pageIndex) > RENDER_NEIGHBOR_RADIUS) return;
+      renderTopPageContent(p, i === entry.pageIndex);
+    });
   } else if (entry.deck === deckId) {
     renderDeckPage(entry);
   }
@@ -1169,11 +1258,15 @@ function connect() {
     // Tell the backend the UI is up — triggers the boot-time fade-up of
     // the backlight from the dark "still booting" state.
     send({ type: "ready" });
-    // Pre-fetch all top-level decks so the carousel pages have data on first scroll.
+    // Pre-fetch the deck for every top page (deduped — channel-1 and
+    // channel-2 share "live", and the backend would just hit the same
+    // cache twice anyway).
+    const decksToFetch = new Set();
     for (const page of TOP_PAGES) {
-      if (page.deck) {
-        send({ type: "request_deck", deck_id: page.deck, offset: 0 });
-      }
+      if (page.deck) decksToFetch.add(page.deck);
+    }
+    for (const deckId of decksToFetch) {
+      send({ type: "request_deck", deck_id: deckId, offset: 0 });
     }
   });
   ws.addEventListener("message", (e) => {
